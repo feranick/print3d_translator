@@ -2,9 +2,11 @@
 """spike.py — runs OrcaSlicer on small cases to learn what the CLI really does (spikes S2, S3, S4):
 positions from the assemble list, filament mapping on the H2D, the .gcode.3mf layout and md5, and
 whether the settings sliced (project_settings.config) equal our flattened profiles.
-Version: 2026.10.24.2
+Version: 2026.10.24.3
 
-    python tools/spike.py [case ...]        cases: p2s_cube, p2s_cube_minsave, h2d_two_pla, h2d_pla_petg
+    python tools/spike.py [case ...]        cases: p2s_cube, p2s_cube_minsave, h2d_two_pla, h2d_pla_petg,
+                                            and CRASH_CASES (narrowing down the PLA + PETG crash)
+    python tools/spike.py crash             only the CRASH_CASES
 
 Writes debug/spike/<case>/ (gitignored) and prints a short summary. Nothing is sent anywhere.
 """
@@ -40,6 +42,28 @@ CASES = {
                      "objects": [{"size": [20, 20, 10], "at": [250, 160], "filament": 1},
                                  {"size": [20, 20, 10], "at": [100, 160], "filament": 2}]},
 }
+# narrowing down the h2d_pla_petg crash (SIGSEGV in OrcaSlicer 2.4.2): which ingredient triggers it?
+_TWO = [{"size": [20, 20, 10], "at": [250, 160], "filament": 1}, {"size": [20, 20, 10], "at": [100, 160], "filament": 2}]
+CRASH_CASES = {
+    "h2d_petg_petg": {"printer": {"model": "H2D"}, "objects": _TWO,          # two PETGs: is it PETG itself?
+                      "filaments": [{"profile": "Bambu PETG HF", "extruder": "right"},
+                                    {"profile": "Bambu PETG Basic", "extruder": "left"}]},
+    "h2d_pla_petg_auto": {"printer": {"model": "H2D"}, "objects": _TWO,      # no manual filament map
+                          "filaments": [{"profile": "Bambu PLA Basic"}, {"profile": "Bambu PETG HF"}]},
+    "h2d_pla_petg_mixtemp": {"printer": {"model": "H2D"}, "objects": _TWO, "extra": ["--allow-mix-temp"],
+                             "filaments": [{"profile": "Bambu PLA Basic", "extruder": "right"},
+                                           {"profile": "Bambu PETG HF", "extruder": "left"}]},
+    "h2d_pla_petg_generic": {"printer": {"model": "H2D"}, "objects": _TWO,   # generic PETG profile instead
+                             "filaments": [{"profile": "Bambu PLA Basic", "extruder": "right"},
+                                           {"profile": "Generic PETG", "extruder": "left"}]},
+    "h2d_petg_only": {"printer": {"model": "H2D"}, "objects": _TWO[:1],     # one PETG object alone
+                      "filaments": [{"profile": "Bambu PETG HF", "extruder": "right"}]},
+    "p2s_pla_petg": {"printer": {"model": "P2S"},                           # the same mix on a one-nozzle printer
+                     "objects": [{"size": [20, 20, 10], "at": [80, 128], "filament": 1},
+                                 {"size": [20, 20, 10], "at": [176, 128], "filament": 2}],
+                     "filaments": [{"profile": "Bambu PLA Basic"}, {"profile": "Bambu PETG HF"}]},
+}
+CASES.update(CRASH_CASES)
 
 META = {"name", "from", "inherits", "setting_id", "instantiation", "type", "compatible_printers",
         "compatible_prints", "filament_id", "description", "version", "renamed_from", "url"}
@@ -61,6 +85,7 @@ def run_case(name: str, case: dict, exe: str, vendor: P.Vendor) -> dict:
     (d / "assemble.json").write_text(json.dumps(orca.assemble_list(objs), indent=1))
     argv = orca.command(exe, d, files["machine"], files["process"], files["filaments"], str(d / "assemble.json"),
                         r["plate"]["bed_type"], r["filament_map"], min_save=case.get("min_save", False))
+    argv += case.get("extra", [])
     res = orca.run(argv, d, timeout=600)
     s = {"case": name, "ok": res["ok"], "exit": {k: res[k] for k in ("returncode", "code", "name", "fix", "seconds")},
          "profiles": r["names"], "filament_map": r["filament_map"],
@@ -175,6 +200,8 @@ def main() -> None:
     print(f"OrcaSlicer {orca.version(exe)} at {exe}; profiles {prof}")
     vendor = P.Vendor(prof)
     names = sys.argv[1:] or list(CASES)
+    if names == ["crash"]:
+        names = list(CRASH_CASES)
     allsum = {}
     for n in names:
         s = run_case(n, CASES[n], exe, vendor)

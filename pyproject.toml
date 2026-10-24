@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "print3d-translator"
-version = "2026.10.24.2"
+version = "2026.10.24.3"
 description = "Print studies (part, Bambu Lab printer, filaments, intent) to OrcaSlicer profiles, sliced and independently checked .gcode.3mf files; CLI, API and MCP server. Never talks to a printer."
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Nicola Ferralis", email = "ferralis@generalflash.com" }]
 license = { text = "MIT" }
-dependencies = ["numpy>=1.22"]
+dependencies = ["numpy>=1.22", "scipy>=1.8"]
 
 [project.optional-dependencies]
 # STEP input (exact volume, tessellation) and build123d-translator goals

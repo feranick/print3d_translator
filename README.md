@@ -10,8 +10,13 @@ It then checks the G-code independently.
 It follows the conventions of the llm-translators family (b3dt, feat, cfdt, lmpt, omct), but is a
 standalone repository that runs locally (macOS first).
 
-**Status: in development.** Done so far: the profile resolver and the OrcaSlicer runner. Next: the
-G-code parser and checker, the `.gcode.3mf` checks, geometry checks, API, MCP server. See `planning.md`.
+**Status: in development.** Done so far:
+- the profile resolver;
+- the OrcaSlicer runner;
+- the G-code parser, the `.gcode.3mf` checks and the checker, tested on real P2S and H2D slices.
+
+Next: geometry checks before slicing, the runner that ties it together, API, CLI, MCP server.
+See `planning.md`.
 
 ## Scope
 
@@ -80,9 +85,54 @@ OrcaSlicer --load-settings "machine.json;process.json" --load-filaments "filamen
 
 `tools/spike.py` runs a few small cases (a cube on the P2S, two cubes with two filaments on the H2D) and summarizes what the CLI produced into `debug/spike/`: archive layout, md5, positions, layers, temperatures, and whether the sliced settings equal ours.
 
+## The checker
+
+The checker reads the G-code itself (`gcode.py`) and does not trust OrcaSlicer's summary.
+- **What the parser follows:**
+  - every move, including arcs, relative moves and absolute E;
+  - tool changes, including Bambu's `M620`/`M620.10` filament-change macros;
+  - temperatures;
+  - OrcaSlicer's layer, feature and object markers.
+- **What it treats as uncertain:**
+  - Firmware conditional blocks (`M622 J…`/`M623`). Their temperatures are recorded but not applied, and a move inside one makes the position unknown.
+  - Bambu machine routines (`G150`, `G29.x`, `G380`, …). After one, the position is unknown until the next absolute move.
+- **Regions:** the machine start G-code, the print, and the machine end G-code. Only the print is held to the part.
+
+Checks on every plate. A failed hard check makes the result `reliable: false`.
+
+| Check | What it verifies | Kind |
+|---|---|---|
+| `archive_layout` | the `.gcode.3mf` holds `Metadata/plate_1.gcode`, its md5, `slice_info.config`, `model_settings.config`, `project_settings.config` | hard |
+| `md5` | `plate_1.gcode.md5` = upper-case hex MD5 of the G-code; the plain `.gcode` is the same file | hard |
+| `printer_model_id` | `slice_info.config` names the printer (H2D `O1D`, H2S `O1S`, P2S `N7`); OrcaSlicer 2.4.2 leaves it empty, so it is filled in | hard |
+| `settings_roundtrip` | every setting OrcaSlicer knows that we wrote equals what it sliced with (`project_settings.config`). Catches the CLI's silent fallback to defaults. | hard |
+| `objects_present` | every placed object is printed, and nothing else | hard |
+| `bounds` | every extrusion of the print is inside the printable area of the extruder that prints it (H2D: left 0–325, right 25–350 mm), 0 < z ≤ height | hard |
+| `layers` | first layer = `initial_layer_print_height`, then `layer_height`; count and top match the part height | hard |
+| `first_layer` | the first extrusion is at the first layer height, and every object starts on the bed | hard |
+| `tools` | each object is printed with its own filament; only the study's filaments are used | hard |
+| `temperatures` | nozzle and bed targets = the filament's (first layer, then the rest; bed by OrcaSlicer's formula), within the filament's range | hard |
+| `unlocated` | no extrusion of the print starts from an unknown position | hard |
+| `extrusion_volume` | per object: extruded volume vs walls + top/bottom shells + infill of its exact volume (±25%), never above 1.1 × the volume | hard |
+| `footprint` | no extrusion outside its allowed region: the object's silhouette + half a line, + brim, + support margin (5 mm); the prime tower inside its declared box and apart from the objects | hard |
+| `travel`, `wrapping_area`, `estimates` | travel stays on the bed; nothing in the wrapping-detection zone; OrcaSlicer's filament lengths and weights equal ours (0.5%, 1%) | soft |
+
+**Tested on real slices.** On OrcaSlicer 2.4.2 slices (P2S cube, H2D two cubes with two filaments) every check passes:
+- filament lengths match OrcaSlicer's to 0.01 mm;
+- extruded volume is 0.96–0.98 of the model;
+- 269 (P2S) and 329 (H2D) settings compared, no difference.
+
+Ten deliberate faults were each caught by the expected check: a part moved by 5 mm, a stray blob, a move off the bed, a dropped layer, a wrong nozzle or bed temperature, swapped filaments, and a study asking for other layers or walls.
+
+**Assumptions** (each with what would catch it):
+- An auto brim is at most 10 mm wide (`footprint` would fail on a wider brim).
+- Supports stay within 5 mm of the silhouette (`footprint`).
+- On the H2D, `M620.10 A1 … P` is the incoming filament's print temperature (`temperatures`).
+
 ## Versions
 
 | Version | Changes |
 |---|---|
+| 2026.10.24.3 | `gcode.py` (streaming G-code reader), `gcode3mf.py` (archive checks, settings round trip, `printer_model_id` patch), `check.py` (the checks above); scipy dependency; spike cases to narrow down the H2D PLA + PETG crash. |
 | 2026.10.24.2 | `orca.py` (find, version, command with the assemble list, run in a process group with timeout and cancel, exit codes with fixes); `mesh.py` (STL in/out, box, transforms, volume); `tools/spike.py`; tests with a fake OrcaSlicer and one real slice (skipped without OrcaSlicer). |
 | 2026.10.24.1 | Project skeleton; profile resolver (`profiles.py`) with intent and overrides; OrcaSlicer key data (2.4.2); tests on a hand-written profile tree and on the real profiles. |

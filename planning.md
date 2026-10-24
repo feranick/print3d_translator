@@ -273,6 +273,25 @@ One study = one plate. JSON, `{name: study}`. Units: mm, °C, %, mm/s.
   - Written: `orca.py`, `mesh.py`, `tools/spike.py`, `tests/test_mesh_orca.py`. 64 offline tests pass in the sandbox.
   - From the source: with `--outputdir`, the CLI also writes `plate_1.gcode` there. `--export-settings` saves the config when the option is processed. The archive's `project_settings.config` is the settings actually sliced, so it is what the settings check reads.
   - Next: run `tools/spike.py` on the Mac and read `debug/spike/*/summary.json`, then write gcode.py and gcode3mf.py from what it shows.
+- 2026-10-24: **Spike on the Mac (OrcaSlicer 2.4.2).**
+  - p2s_cube, p2s_cube_minsave and h2d_two_pla slice in about 0.3 s. h2d_pla_petg crashes (SIGSEGV).
+  - **Positions are kept** (assemble list, need_arrange false): the extrusion box is exactly the placed cube. S2 done.
+  - **H2D filament map:** `--filament-map-mode Manual --filament-map 2,1` reaches project_settings and slice_info (`filament_maps "2 1"`). model_settings still says "Auto For Flush" (cosmetic). S3 done, apart from which nozzle is physically "1".
+  - **Archive:** layout as in gcode3mf.py; the md5 is upper-case and matches; the plain gcode is identical; there are no thumbnails.
+    - `printer_model_id` is empty, so it is patched.
+    - slice_info also holds OrcaSlicer warnings (e.g. `bed_temperature_too_high_than_filament` for PLA Basic + PLA Matte).
+    - `--min-save` only drops `3D/Objects/*.model`.
+  - **G-code:**
+    - The footer `; filament used [mm]` is the positive E of XY moves per filament, including the start G-code's prime line; it matches ours exactly.
+    - Temperatures are often inside M622/M623 blocks. On the H2D the second nozzle's temperature is in `M620.10 A1 ... P<temp>`.
+    - Object markers `; printing object <stl stem>_<copy> id:...`.
+  - **Settings round trip:** after normalization (unknown keys skipped, variant lists collapsed, points 0X0 = 0x0), 0 differences out of 269 (P2S) and 329 (H2D). A changed value is caught. This confirms the flattening.
+- 2026-10-24: **Step 3 (2026.10.24.3).**
+  - Written: `gcode.py`, `gcode3mf.py`, `check.py`, `tests/test_gcode_check.py` (synthetic G-code and archives).
+  - 103 tests pass in the sandbox. All checks pass on the real P2S and H2D slices, and 10 injected faults are each caught.
+  - Fixed: the volume model counted a bottom shell when `bottom_shell_layers` = 0.
+  - **Open: the PLA + PETG crash on the H2D.** The log ends inside `update_values_to_printer_extruders_for_multiple_filaments`; the same "variant index out of range" warnings appear in the run that succeeded. `CRASH_CASES` in tools/spike.py narrow it down: PETG + PETG, auto map, `--allow-mix-temp`, Generic PETG, PETG alone, PLA + PETG on the P2S. Run `python tools/spike.py crash` on the Mac.
+  - Next: geometry checks before slicing (`geometry.py`: STEP/STL/3MF, orientation, overhang, bed contact, thin walls, fit), then `runner.py`, `format.py`, `api.py`, `cli.py`, `mcp_server.py`.
 
 ## Open ideas
 
