@@ -148,19 +148,25 @@ Settings, read from the environment:
 | `layers` | first layer = `initial_layer_print_height`, then `layer_height`; count and top match the part height | hard |
 | `first_layer` | the first extrusion is at the first layer height, and every object starts on the bed | hard |
 | `tools` | each object is printed with its own filament; only the study's filaments are used | hard |
-| `temperatures` | nozzle and bed targets = the filament's (first layer, then the rest; bed by OrcaSlicer's formula), within the filament's range | hard |
+| `temperatures` | nozzle and bed targets = the filament's (first layer, then the rest), within the filament's range. The bed follows OrcaSlicer's formula: `by_first_filament` = the filament active at each layer change, `by_highest_temp` = the hottest used filament. | hard |
 | `unlocated` | no extrusion of the print starts from an unknown position | hard |
 | `extrusion_volume` | per object: extruded volume vs walls + top/bottom shells + infill of its exact volume (±25%), never above 1.1 × the volume | hard |
 | `footprint` | no extrusion outside its allowed region: the object's silhouette + half a line, + brim, + support margin (5 mm); the prime tower inside its declared box and apart from the objects | hard |
-| `travel`, `wrapping_area`, `estimates` | travel stays on the bed; nothing in the wrapping-detection zone; OrcaSlicer's filament lengths and weights equal ours (0.5%, 1%) | soft |
+| `travel`, `wrapping_area`, `estimates` | travel stays on the bed; nothing in the wrapping-detection zone; OrcaSlicer's filament totals equal ours (0.5% length, 2% weight). Ours include the firmware flushes on filament changes, which the G-code carries only as `;VG1 E…` comments in `VFLUSH` blocks. | soft |
 | `shared_nozzle` | (H2D) filaments whose print temperatures differ by more than 15 °C are not on the same nozzle. OrcaSlicer's auto map can put PLA and PETG on one nozzle. | soft |
-| `bed_vs_filaments` | the bed is not more than 10 °C above a used filament's own bed temperature. PLA + PETG on one plate gets a 70 °C bed. | soft |
+| `bed_vs_filaments` | the hottest bed of the print is not more than 10 °C above a used filament's own bed temperature. PLA + PETG on one plate gets a 70 °C bed on some or all layers. | soft |
 | `expect` | the study's expected values | hard |
 
-**Tested on real slices.** On OrcaSlicer 2.4.2 slices (P2S cube; H2D PLA+PLA, PLA+PETG, PETG+PETG) every check passes:
-- filament lengths match OrcaSlicer's to 0.01 mm;
+**Tested on real slices.** On OrcaSlicer 2.4.2 every hard check passes for:
+- the spike cases: P2S cube; H2D PLA+PLA, PLA+PETG, PETG+PETG;
+- the benchmarks;
+- `examples/studies.json`: P2S cube, H2S PETG copies, H2D two colours, P2S PLA+PETG with `allow_mix_temp` and a prime tower.
+
+On those slices:
+- filament totals match OrcaSlicer's to 0.01 mm, including 6.26 m of firmware flush on the P2S;
 - extruded volume is 0.96–0.98 of the model;
-- 268–331 settings compared per slice, no difference.
+- 268–335 settings compared per slice, no difference;
+- the prime tower is printed inside the box we placed it in.
 
 Ten deliberate faults were each caught by the expected check: a part moved by 5 mm, a stray blob, a move off the bed, a dropped layer, a wrong nozzle or bed temperature, swapped filaments, and a study asking for other layers or walls.
 
@@ -210,6 +216,8 @@ The instructions tell the model to:
 - put filaments with different temperatures on separate H2D nozzles;
 - stop polling runs that take more than about 5 minutes.
 
+`run_studies` and `study_status` return a summary per study (about 3 kB): the verdict, warnings, files, estimate, profiles, objects, the failed checks in full and the passed ones by name. The full result stays on disk (`result`). `p3dt run` prints the same summary; `--full` prints everything.
+
 Claude desktop config:
 
 ```json
@@ -233,6 +241,13 @@ OrcaSlicer's profiles are AGPL-3.0, so they are read from the installed OrcaSlic
 
 | Version | Changes |
 |---|---|
+| 2026.10.24.7 | From the first full runs on the Mac:
+- the bed check follows `by_first_filament` per layer;
+- `estimates` compares totals including firmware flushes (`;VG1` in `VFLUSH`);
+- `bed_vs_filaments` uses the hottest bed of the print;
+- MCP and CLI return compact summaries (the full JSON stays on disk);
+- an explicit `P3DT_ORCA_PROFILES` has no fallback;
+- the fake OrcaSlicer's crash mode uses SIGKILL, so macOS writes no crash report. |
 | 2026.10.24.6 | `geometry.py` (STEP/b3dt/STL/3MF loading, orientation, checks before slicing), `placement.py` (parts and prime tower: fixes the off-bed tower on the P2S), `format.py` (study format and validation with OrcaSlicer's filament-compatibility rule), `runner.py`, `api.py`, `cli.py`, `mcp_server.py`, benchmarks, `allow_mix_temp`; fake OrcaSlicer and end-to-end tests. |
 | 2026.10.24.5 | Soft checks `shared_nozzle` and `bed_vs_filaments`; a filament map shorter than the filament list is padded with its first value, as OrcaSlicer does. |
 | 2026.10.24.4 | Fix: every filament gets a `filament_colour` (the study's, or a distinct default with a warning). Without one, OrcaSlicer 2.4.2's CLI skips the flush-volume matrix and crashes (SIGSEGV) on any plate with 2+ filaments. Spike case P2S PLA + PETG with `--allow-mix-temp`. |

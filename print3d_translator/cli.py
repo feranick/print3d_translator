@@ -1,10 +1,10 @@
 """cli.py — the command line. Every command prints JSON; '-' reads the studies from stdin.
-Version: 2026.10.24.6
+Version: 2026.10.24.7
 
     p3dt status                         versions; OrcaSlicer and its profiles found or not
     p3dt format                         the study format
     p3dt validate studies.json          static checks (profiles resolved when OrcaSlicer is here)
-    p3dt run studies.json [--wait S]    slice and check (waits until done unless --wait)
+    p3dt run studies.json [--wait S] [--full]   slice and check (a summary per study; --full: everything)
     p3dt status REQUEST [--wait S]      a request's results and progress
     p3dt inputs studies.json NAME       profiles, placement and the OrcaSlicer command, without slicing
     p3dt bench [NAMES...]               the benchmarks (generated parts, known answers)
@@ -41,12 +41,14 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("status")
     s.add_argument("request", nargs="?")
     s.add_argument("--wait", type=float, default=0.0)
+    s.add_argument("--full", action="store_true", help="every check in full (default: a summary)")
     sub.add_parser("format")
     s = sub.add_parser("validate")
     s.add_argument("studies")
     s = sub.add_parser("run")
     s.add_argument("studies")
     s.add_argument("--wait", type=float, default=None)
+    s.add_argument("--full", action="store_true", help="every check in full (default: a summary)")
     s = sub.add_parser("inputs")
     s.add_argument("studies")
     s.add_argument("name")
@@ -64,7 +66,11 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
 
     if a.cmd == "status":
-        _print(api.status(a.request, a.wait) if a.request else api.tool_status())
+        if a.request:
+            st = api.status(a.request, a.wait)
+            _print(st if a.full else api.summarize_request(st))
+        else:
+            _print(api.tool_status())
     elif a.cmd == "format":
         _print(api.study_format())
     elif a.cmd == "validate":
@@ -75,7 +81,7 @@ def main(argv: list[str] | None = None) -> int:
     elif a.cmd == "run":
         studies, base = _load(a.studies)
         res = api.run(studies, a.wait, base)
-        _print(res)
+        _print(res if a.full or "error" in res else api.summarize_request(res))
         if "error" in res:
             return 1
         return 0 if res.get("done") and all(r.get("reliable") for r in res["studies"].values()) else 2

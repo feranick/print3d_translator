@@ -2,9 +2,9 @@
 """fake_orca.py — a stand-in for the OrcaSlicer CLI in tests: reads the assemble list (STLs of boxes) and
 the settings files the translator wrote, and writes Bambu-style G-code and a .gcode.3mf whose
 extrusion volume, layers, temperatures and placement follow those settings. FAKE_ORCA_MODE:
-  ok (default) | fail17 (exit -17) | crash (SIGSEGV) | shift (parts printed 6 mm off) | hot (+20 C nozzle)
+  ok (default) | fail17 (exit -17) | crash (killed by a signal) | shift (parts printed 6 mm off) | hot (+20 C nozzle)
   | sleep (never ends, for timeouts and cancel)
-Version: 2026.10.24.6
+Version: 2026.10.24.7
 """
 import hashlib
 import json
@@ -41,7 +41,7 @@ def main(argv):
     if mode == "fail17":
         return 256 - 17
     if mode == "crash":
-        os.kill(os.getpid(), signal.SIGSEGV)
+        os.kill(os.getpid(), signal.SIGKILL)   # SIGSEGV would make macOS write a crash report
     if mode == "sleep":
         time.sleep(600)
     machine, process = [json.loads(Path(p).read_text()) for p in arg(argv, "--load-settings").split(";")]

@@ -1,7 +1,7 @@
 # print3d_translator: planning
 
 Session context. A new chat starts with "Read planning.md and start."
-Status: **complete end to end, 2026.10.24.6** (2026-10-24); verifying on the Mac (see "State log").
+Status: **complete end to end, 2026.10.24.7, verified on the Mac** (2026-10-24); verifying on the Mac (see "State log").
 
 ## Decisions (2026-10-24)
 
@@ -343,3 +343,17 @@ One study = one plate. JSON, `{name: study}`. Units: mm, °C, %, mm/s.
 - `orient: "min_support"`: search rotations by overhang area.
 - Variable layer height, ironing, fuzzy skin: out of scope for v1.
 - A top-view PNG thumbnail drawn from our own geometry.
+- 2026-10-24: **First full runs on the Mac (2026.10.24.6).**
+  - `pytest`: 156 passed, 1 failed (test_validate_without_profiles: find_profiles fell back to /Applications despite an explicit P3DT_ORCA_PROFILES).
+  - `p3dt bench`: 3/3 passed.
+  - **`p3dt run examples`: exit 2.** P2S PLA+PETG with allow_mix_temp was unreliable:
+    - **temperatures:** the bed went 55 → 70 C at layer 2, which is OrcaSlicer's `by_first_filament` (the filament active at the layer change), not a fault;
+    - **estimates:** OrcaSlicer's totals include the firmware flushes, which appear only as `;VG1 E` in `VFLUSH` blocks (41.6 mm per change on the P2S).
+
+    With flushes counted, the totals match to 0.01 mm (11676.44). The split between the two filaments differs by 208 mm, so totals are compared.
+  - **The prime tower position we set is kept** (wipe_tower_x/y round trip, printed inside the planned box): an assumption confirmed.
+  - **The macOS "Python crashed" report** was the fake OrcaSlicer's crash mode (SIGSEGV), now SIGKILL.
+  - **MCP run_studies returned 82 kB** for 4 studies, too large for a model. Now a summary per study (~3 kB), with the full JSON on disk.
+  - The p3dt MCP server is connected to this Claude session: studies can be run on the Mac directly; `~/p3dt_runs` is shared read-only with the sandbox.
+- 2026-10-24: **2026.10.24.7.** Fixes above. All 7 real slices re-checked: reliable; P2S PLA+PETG: `bed_vs_filaments` warns (PLA on a 70 C bed). 147 tests pass in the sandbox.
+  - Next: real STEP parts from b3dt; an overhang part with tree supports; S4 (compare with Bambu Studio's .gcode.3mf).

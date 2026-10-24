@@ -1,7 +1,7 @@
 """gcode.py — an independent, streaming reader of OrcaSlicer / Bambu Lab G-code. It does not trust the
 slicer's summary: it follows every move and returns the extrusion segments, layers, tools, objects,
 features and temperatures, which check.py compares with the study.
-Version: 2026.10.24.3
+Version: 2026.10.24.7
 
 What it understands:
 - G0/G1 and arcs G2/G3 (I/J centre offsets, Z helix, P full turns), G90/G91, M82/M83, G92, G28.
@@ -15,6 +15,9 @@ What it understands:
 - Bambu machine routines (G28.x, G29.x, G39.x, G130, G150.x, G380, G383.x, G389, G392, ...): the
   head moves where the firmware decides, so the position becomes unknown until the next absolute
   X/Y move. Extrusion from an unknown position is counted but not located.
+- Firmware purges on filament change: Bambu printers flush in firmware; the G-code only carries
+  commented virtual moves ';VG1 E<mm>' between '; VFLUSH_START' and '; VFLUSH_END'. They are summed
+  per incoming tool in e_flush (OrcaSlicer counts them in its filament totals).
 - OrcaSlicer comments: HEADER_BLOCK, CONFIG_BLOCK, '; CHANGE_LAYER', '; Z_HEIGHT:', '; LAYER_HEIGHT:',
   '; FEATURE:', '; printing object <name> id:<id> copy <n>' / '; stop printing object ...', the footer
   '; filament used [mm] = ...'.
@@ -90,6 +93,7 @@ class Parsed:
     e_net: dict = field(default_factory=dict)          # {tool: net E mm over the whole file}
     e_unlocated: dict = field(default_factory=dict)    # {tool: E mm extruded from an unknown position}
     unlocated_by_region: dict = field(default_factory=dict)   # {region: E mm from an unknown position}
+    e_flush: dict = field(default_factory=dict)        # {tool: mm} purged by the firmware (';VG1 E' in VFLUSH blocks)
     travel_bbox: dict = field(default_factory=dict)    # {region: [xmin, ymin, xmax, ymax, zmax]}
     temps: list = field(default_factory=list)          # [{line, kind, value, tool, wait, conditional, region, layer, flags}]
     tool_changes: list = field(default_factory=list)   # [{line, tool, region, layer, conditional}]
@@ -175,6 +179,7 @@ def parse(text: str, arc_step_deg: float = 10.0) -> Parsed:
     cond_moved = False
     region = 0
     pending_incoming: list[dict] = []
+    in_vflush = False
     tb = {r: [math.inf, math.inf, -math.inf, -math.inf, -math.inf] for r in REGIONS}
 
     for i, raw in enumerate(lines):
@@ -187,6 +192,15 @@ def parse(text: str, arc_step_deg: float = 10.0) -> Parsed:
             continue
         if line.startswith(";"):
             s = line[1:].strip()
+            if s == "VFLUSH_START":
+                in_vflush = True
+            elif s == "VFLUSH_END":
+                in_vflush = False
+            elif in_vflush and s.startswith("VG1"):
+                m = re.search(r"\bE(-?\d*\.?\d+)", s)
+                if m and float(m.group(1)) > 0:
+                    key = tool if tool is not None else -1
+                    P.e_flush[key] = P.e_flush.get(key, 0.0) + float(m.group(1))
             if s == "CHANGE_LAYER":
                 layer += 1
                 P.layers.append({"n": layer + 1, "line": i, "z_height": None, "layer_height": None})

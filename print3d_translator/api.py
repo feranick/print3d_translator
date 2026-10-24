@@ -1,5 +1,5 @@
 """api.py — what the CLI and the MCP server call. JSON in, JSON out.
-Version: 2026.10.24.6
+Version: 2026.10.24.7
 
     tool_status()                 versions; OrcaSlicer and its profiles found or not; build123d
     study_format()                the study format (with tool_status), for the caller to read
@@ -157,6 +157,42 @@ def _collect(d: Path) -> dict:
                    f"{len(out['pending'])} still slicing (usually seconds to a few minutes): call study_status "
                    f"with this request")
     return out
+
+
+def summarize(res: dict, path: str | None = None) -> dict:
+    """A study's result in a few kB, for LLM tools and the terminal: the verdict, warnings, files,
+    estimate, profiles, objects, the failed checks in full and the passed ones by name. The full result
+    stays in <study>/<study>.json ('result')."""
+    checks = res.get("checks") or {}
+    failed = {k: {kk: v.get(kk) for kk in ("hard", "why", "got", "expected", "problems") if v.get(kk) is not None}
+              for k, v in checks.items() if not v.get("passed")}
+    for v in failed.values():
+        if len(json.dumps(v.get("got"), default=str)) > 1500:
+            v["got"] = "(large: see the full result)"
+    objs = {}
+    for n, o in (res.get("objects") or {}).items():
+        objs[n] = {k: o.get(k) for k in ("volume_mm3", "volume_from", "size_mm", "orient", "filament", "copies", "centers")}
+        bad = {k: c.get("got") for k, c in (o.get("checks") or {}).items() if not c.get("passed")}
+        if bad:
+            objs[n]["failed_checks"] = bad
+    prof = res.get("profiles") or {}
+    out = {"ok": res.get("ok"), "reliable": res.get("reliable"), "unreliable_because": res.get("unreliable_because"),
+           "why": res.get("why"), "errors": res.get("errors"), "warnings": res.get("warnings"),
+           "result": path, "files": res.get("files"), "estimate": res.get("estimate"),
+           "printer": res.get("printer"),
+           "profiles": {k: prof.get(k) for k in ("machine", "process", "filaments", "filament_map", "set", "orca_version")},
+           "objects": objs, "placement": res.get("placement"), "checks_failed": failed,
+           "checks_passed": sorted(k for k, v in checks.items() if v.get("passed")),
+           "expect": res.get("expect"), "slicer": res.get("slicer"), "seconds": res.get("seconds")}
+    return {k: v for k, v in out.items() if v not in (None, [], {})} | {"ok": res.get("ok"), "reliable": res.get("reliable")}
+
+
+def summarize_request(st: dict) -> dict:
+    """status/run output with each finished study summarized."""
+    if "studies" not in st:
+        return st
+    d = Path(st.get("request", "."))
+    return {**st, "studies": {n: summarize(r, str(d / n / f"{n}.json")) for n, r in st["studies"].items()}}
 
 
 def status(request: str, wait: float = 0.0) -> dict:

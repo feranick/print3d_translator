@@ -1,7 +1,7 @@
 """profiles.py — OrcaSlicer system profiles: find them, index them, flatten them, choose the machine,
 process and filament profiles for a study, apply the intent and overrides, and write the flattened
 copies the OrcaSlicer CLI loads.
-Version: 2026.10.24.4
+Version: 2026.10.24.7
 
 Why we flatten: OrcaSlicer 2.4.2's --load-settings / --load-filaments read one JSON file and do not
 follow "inherits" (OrcaSlicer issue #14718): every key a leaf profile does not set silently falls back
@@ -91,8 +91,11 @@ def profile_dir_candidates(orca_exe: str | None = None) -> list[Path]:
 
 
 def find_profiles(orca_exe: str | None = None) -> Path | None:
-    """The first candidate folder with <VENDOR>.json and a <VENDOR>/ folder, or None."""
-    for d in profile_dir_candidates(orca_exe):
+    """The first candidate folder with <VENDOR>.json and a <VENDOR>/ folder, or None. An explicit
+    P3DT_ORCA_PROFILES is used alone (no silent fallback to another install)."""
+    env = os.environ.get("P3DT_ORCA_PROFILES")
+    cands = [Path(env).expanduser()] if env else profile_dir_candidates(orca_exe)
+    for d in cands:
         if (d / f"{VENDOR}.json").is_file() and (d / VENDOR).is_dir():
             return d
     return None

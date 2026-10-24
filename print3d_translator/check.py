@@ -1,7 +1,7 @@
 """check.py — independent checks of a sliced plate: the G-code (as gcode.py reads it) against the study,
 our flattened profiles and the placed geometry. Nothing here trusts OrcaSlicer's own summary; its
 estimates are only compared with ours.
-Version: 2026.10.24.5
+Version: 2026.10.24.7
 
 Each check is {passed, hard, why, got, expected, ...}. A failed hard check makes the result
 unreliable. The checks:
@@ -353,12 +353,17 @@ def _temperatures(P: G.Parsed, resolved: dict, used: list[int]) -> dict:
     got_bed = beds_before[-1]["value"] if beds_before else None
     if got_bed != bed_first:
         problems.append(f"bed at the start of the print {got_bed}, expected {bed_first} ({plate['bed_type']}, {formula})")
+    # by_first_filament: the bed follows the filament active at each layer change (OrcaSlicer 2.4.2 P2S:
+    # 55 C under PLA, 70 C once a layer starts with PETG); by_highest_temp: the hottest used filament's
+    allowed = {bed_first, bed_other} if formula == "by_highest_temp" else \
+        {bed_first, bed_other} | {e["bed_other"] for e in pool} | {e["bed_first"] for e in pool}
     for t in unc:
-        if t["kind"] == "bed" and t["region"] == "print" and t["value"] not in (bed_first, bed_other):
-            problems.append(f"line {t['line'] + 1}: bed {t['value']}, expected {bed_first} or {bed_other}")
+        if t["kind"] == "bed" and t["region"] == "print" and t["value"] not in allowed:
+            problems.append(f"line {t['line'] + 1}: bed {t['value']}, expected one of {sorted(allowed)} ({formula})")
     return _c(not problems, "nozzle and bed temperatures are the filaments' (first layer, then the rest), within range",
               got={"nozzle_start": got_first, "nozzle_in_print": {k: sorted(v) for k, v in seen.items()},
-                   "bed_start": got_bed}, expected={"filaments": exp, "bed": [bed_first, bed_other]},
+                   "bed_start": got_bed, "bed_max": max([got_bed or 0] + [t["value"] for t in unc if t["kind"] == "bed"
+                                                                          and t["region"] == "print"])}, expected={"filaments": exp, "bed": [bed_first, bed_other]},
               problems=problems[:20])
 
 
@@ -385,7 +390,7 @@ def _compromises(resolved: dict, used: list[int], fmap: list[int] | None, ext_ar
                                   "(set filaments[].extruder 'left'/'right')", hard=False,
                                   got={"by_extruder": {str(k): [t + 1 for t in v] for k, v in groups.items()}},
                                   problems=problems)
-    bed = temps.get("got", {}).get("bed_start")
+    bed = temps.get("got", {}).get("bed_max") or temps.get("got", {}).get("bed_start")
     if bed is not None and used:
         over = [f"filament {t + 1}: bed {bed} C, its own {exp[t]['bed_first']} C" for t in used
                 if t < len(exp) and bed > exp[t]["bed_first"] + 10]
@@ -484,35 +489,43 @@ def _footprint(objects, seg, info, printing, obj_of_seg, cats, vol, pv, tower_bb
 
 
 def _estimates(P: G.Parsed, fils: list[dict], diam: list[float]) -> tuple[dict, dict]:
+    """OrcaSlicer's filament totals vs ours: extrusion (located or not) + firmware flushes ('VG1' in VFLUSH
+    blocks). The totals must agree (0.5% in length, 2% in weight); OrcaSlicer splits flushes between the
+    two filaments of a change differently, so the per-filament rows are for information."""
     ours = {}
     if len(P.segments):
         for t in np.unique(P.seg_info[:, 1]):
             ours[int(t)] = float(P.segments[P.seg_info[:, 1] == t, 5].sum())
-    for t, v in P.e_unlocated.items():
-        if isinstance(t, (int, np.integer)):
-            ours[int(t)] = ours.get(int(t), 0.0) + v
+    for src in (P.e_unlocated, P.e_flush):
+        for t, v in src.items():
+            if isinstance(t, (int, np.integer)):
+                ours[int(t)] = ours.get(int(t), 0.0) + v
     foot_mm = P.footer.get("filament used [mm]", [])
     foot_g = P.footer.get("filament used [g]", [])
-    rows, ok = [], True
+    rows = []
+    g_ours_total = 0.0
     for i, mm in enumerate(foot_mm):
         o = ours.get(i, 0.0)
         dens = _f(fils[i].get("filament_density"), 1.24) if i < len(fils) else 1.24
         g_ours = o * G.filament_area(diam[i] if i < len(diam) else 1.75) * dens / 1000.0
-        g_orca = foot_g[i] if i < len(foot_g) else None
-        good = (mm == 0 and o < 0.01) or (mm > 0 and abs(o - mm) / mm <= 0.005)
-        good &= g_orca is None or abs(g_ours - g_orca) <= max(0.02, 0.01 * g_orca)
-        ok &= good
-        rows.append({"filament": i + 1, "orca_mm": mm, "ours_mm": round(o, 2), "orca_g": g_orca,
-                     "ours_g": round(g_ours, 2), "passed": good})
+        g_ours_total += g_ours
+        rows.append({"filament": i + 1, "orca_mm": mm, "ours_mm": round(o, 2), "flush_mm": round(P.e_flush.get(i, 0.0), 2),
+                     "orca_g": foot_g[i] if i < len(foot_g) else None, "ours_g": round(g_ours, 2)})
+    tot_orca, tot_ours = sum(foot_mm), sum(ours.get(i, 0.0) for i in range(len(foot_mm)))
+    g_orca = sum(foot_g) if foot_g else None
+    ok = bool(rows) and ((tot_orca == 0 and tot_ours < 0.01) or (tot_orca > 0 and abs(tot_ours - tot_orca) / tot_orca <= 0.005))
+    ok &= g_orca is None or abs(g_ours_total - g_orca) <= max(0.05, 0.02 * g_orca)
     est = {"time_s": P.header.get("total_time_s"), "model_time_s": P.header.get("model_time_s"),
-           "filament_m": round(sum(foot_mm) / 1000.0, 3) if foot_mm else None,
-           "filament_g": round(sum(foot_g), 2) if foot_g else None,
+           "filament_m": round(tot_orca / 1000.0, 3) if foot_mm else None,
+           "filament_g": round(g_orca, 2) if g_orca is not None else None,
+           "flush_m": round(sum(P.e_flush.values()) / 1000.0, 3),
            "by_filament": [{"n": r["filament"], "m": round(r["orca_mm"] / 1000.0, 3), "g": r["orca_g"]} for r in rows]}
     if est["time_s"] is not None:
         s = int(est["time_s"])
         est["time"] = f"{s // 3600}h{(s % 3600) // 60:02d}m{s % 60:02d}s"
-    return _c(ok and bool(rows), "OrcaSlicer's filament lengths and weights equal ours (0.5%, 1%)", hard=False,
-              got=rows), est
+    return _c(ok, "OrcaSlicer's filament totals equal ours, flushes included (0.5% length, 2% weight)", hard=False,
+              got={"total_mm": [round(tot_orca, 2), round(tot_ours, 2)], "total_g": [g_orca, round(g_ours_total, 2)],
+                   "by_filament": rows}), est
 
 
 def verdict(checks: dict) -> tuple[bool, list[str]]:

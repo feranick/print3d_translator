@@ -324,3 +324,36 @@ def test_spike_outputs_parse_and_match_footer(case):
     assert len(P.layers) == P.header["layers"]
     a = A.read(d / "plate.gcode.3mf")
     assert a["md5_file"] == A.md5_upper(a["gcode"])
+
+
+# ------------------------------------------------------------- 2026.10.24.7: firmware flushes, bed per layer
+
+def test_virtual_flush_counted_per_incoming_tool():
+    text = ("M83\nG1 X0 Y0 Z0.2\nT0\n; CHANGE_LAYER\nG1 X1 E1\nM620 S1A\nT1\n;deretract\n;VG1 E4 F523\n"
+            "; VFLUSH_START\n;VG1 E41.5 F523\n;VG1 E0.5 F523\nSYNC T5\n; VFLUSH_END\nM621 S1A\nG1 X2 E1\n")
+    P = G.parse(text)
+    assert P.e_flush == {1: 42.0}                      # deretracts outside VFLUSH are not purges
+
+
+def test_estimates_compare_totals_with_flush():
+    text, _, e = synth()
+    flush = ("\n; VFLUSH_START\n;VG1 E40 F500\n; VFLUSH_END\n")
+    t = text.replace("; FEATURE: Custom", flush + "; FEATURE: Custom")
+    t = re.sub(r"; filament used \[mm\] = [\d.]+", f"; filament used [mm] = {e + 40:.2f}", t)
+    t = re.sub(r"; filament used \[g\] = [\d.]+", f"; filament used [g] = {(e + 40) * G.filament_area() * 1.26 / 1000:.2f}", t)
+    res = C.check_gcode(G.parse(t), resolved(), [obj()])
+    assert res["checks"]["estimates"]["passed"], res["checks"]["estimates"]
+    assert res["estimate"]["flush_m"] == pytest.approx(0.04)
+
+
+def test_bed_follows_the_layers_first_filament():
+    # by_first_filament: a later layer that starts with filament 2 heats the bed to filament 2's temperature
+    text, _, _ = synth(extra_layer_lines="T1\nM140 S70\nG1 X50 Y60 E0.1\nT0")
+    r = resolved(n_fil=2)
+    r["filaments"][1]["textured_plate_temp"] = ["70"]
+    r["filaments"][1]["textured_plate_temp_initial_layer"] = ["70"]
+    res = C.check_gcode(G.parse(text), r, [obj()])
+    assert res["checks"]["temperatures"]["passed"], res["checks"]["temperatures"]
+    assert not res["checks"]["bed_vs_filaments"]["passed"]          # PLA part on a 70 C bed: a warning
+    bad = C.check_gcode(G.parse(synth(extra_layer_lines="T1\nM140 S90\nG1 X50 Y60 E0.1\nT0")[0]), r, [obj()])
+    assert not bad["checks"]["temperatures"]["passed"]

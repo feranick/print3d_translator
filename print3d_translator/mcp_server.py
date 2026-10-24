@@ -1,6 +1,6 @@
 """mcp_server.py — MCP server (stdio): lets LLM-based tools turn parts into checked Bambu Lab print files
 with OrcaSlicer. It never talks to a printer.
-Version: 2026.10.24.6
+Version: 2026.10.24.7
 
 Tools (all JSON):
   study_format      the study format: printer, filaments, objects, intent, overrides. Read it first.
@@ -63,15 +63,16 @@ def run_studies(studies: dict, wait_s: float = 45) -> dict:
     print, gcode, profiles, log), estimate (time, filament g and m), objects (exact volumes, orientation,
     placement, checks before slicing), checks (archive, md5, printer id, settings round trip, bounds,
     layers, temperatures, tools, extrusion volume, footprint), expect. Returns after at most wait_s
-    seconds (<= 50); unfinished studies are in 'pending' with progress: collect them with study_status."""
-    return api.run(studies, wait=min(max(float(wait_s), 0.0), 50.0))
+    seconds (<= 50); unfinished studies are in 'pending' with progress: collect them with study_status.
+    Each study is summarized (failed checks in full, passed ones by name); 'result' is the full JSON's path."""
+    return api.summarize_request(api.run(studies, wait=min(max(float(wait_s), 0.0), 50.0)))
 
 
 @server.tool()
 def study_status(request: str, wait_s: float = 45) -> dict:
     """The studies of a run_studies request (its 'request' path): finished ones with their results, the
     others in 'pending' with progress. Waits up to wait_s seconds (at most 50)."""
-    return api.status(request, min(max(float(wait_s), 0.0), 50.0))
+    return api.summarize_request(api.status(request, min(max(float(wait_s), 0.0), 50.0)))
 
 
 @server.tool()

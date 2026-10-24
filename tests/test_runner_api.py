@@ -1,6 +1,6 @@
 """End-to-end tests of format.py, runner.py, api.py, cli.py and mcp_server.py with a fake OrcaSlicer
 (tests/fake_orca.py) and the hand-written profile tree; and one real run when OrcaSlicer is installed.
-Version: 2026.10.24.6
+Version: 2026.10.24.7
 """
 import json
 import os
@@ -215,3 +215,17 @@ def test_real_bench_cube(tmp_path, monkeypatch):
     monkeypatch.setenv("P3DT_OUT", str(tmp_path))
     out = api.bench(["p2s_cube"], wait=300)
     assert out["passed"] == ["p2s_cube"], out
+
+
+def test_explicit_profiles_setting_has_no_fallback(fake, monkeypatch):
+    monkeypatch.setenv("P3DT_ORCA_PROFILES", str(fake / "none"))
+    assert P.find_profiles() is None
+
+
+def test_summaries_are_small(fake):
+    out = api.run({"one": p2s(fake), "two": h2d(fake)}, wait=60)
+    s = api.summarize_request(out)
+    assert len(json.dumps(s)) < 0.5 * len(json.dumps(out))
+    one = s["studies"]["one"]
+    assert one["reliable"] and one["result"].endswith("one/one.json") and "settings_roundtrip" in one["checks_passed"]
+    assert not one.get("checks_failed")
