@@ -1,0 +1,6 @@
+{
+    "type": "machine_model",
+    "name": "Bambu Lab X9",
+    "model_id": "X9",
+    "nozzle_diameter": "0.4"
+}

@@ -1,0 +1,20 @@
+{
+    "type": "machine",
+    "name": "Bambu Lab H2D 0.4 nozzle",
+    "inherits": "fdm_bbl_3dp_002_common",
+    "from": "system",
+    "setting_id": "T001",
+    "instantiation": "true",
+    "printer_model": "Bambu Lab H2D",
+    "printer_variant": "0.4",
+    "extruder_printable_area": [
+        "0x0,325x0,325x320,0x320",
+        "25x0,350x0,350x320,25x320"
+    ],
+    "retraction_length": [
+        "0.8",
+        "0.8",
+        "0.8",
+        "0.8"
+    ]
+}

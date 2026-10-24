@@ -1,0 +1,272 @@
+# print3d_translator: planning
+
+Session context. A new chat starts with "Read planning.md and start."
+Status: **proposal approved** (2026-10-24). Building step by step (see "State log").
+
+## Decisions (2026-10-24)
+
+- **Repository:** `print3d_translator` (github.com/feranick/print3d_translator). It replaces the first
+  folder, `3d-print-translator`. Standalone: not added to llm-translators.
+- **Terminology:** "study", so the API, CLI and MCP tool names match the other translators.
+- **Runs locally on the Mac.** No remote features unless one gives a clear advantage:
+  - no SLURM, executor, router or machines;
+  - no MCP HTTP mode (stdio only);
+  - `get_file` is kept, because it is cheap and lets a client read the outputs.
+- **Linux:** x86_64 and aarch64 stay supported (the backend finder knows the AppImage layout and the tests run there), but they are secondary.
+
+## What this is
+
+A translator in the llm-translators style (b3dt, feat, cfdt, lmpt, omct), kept as a **standalone
+repository**: it is not added to the llm-translators suite. It follows the suite's conventions
+(docs/create_new_translators.md) so it could join later.
+
+It takes a CAD part and a short JSON study (printer, filaments, intent) and returns a checked Bambu Lab
+`.gcode.3mf`, the plain `.gcode`, and the slicer's estimates. It uses the OrcaSlicer CLI. It **never
+talks to a printer**: no network, no cloud, no submission.
+
+- Printers: Bambu Lab **H2D** (two extruders), **H2S**, **P2S**.
+- Nozzles: 0.2, 0.4, 0.6 and 0.8 mm.
+- Filaments: Bambu PLA Basic/Matte and PETG HF/Basic, plus generic PLA and PETG.
+- Multi-material (several filaments per plate, AMS) is in scope from v1.
+- Hosts: macOS (primary, local). Linux x86_64 and aarch64 headless are secondary.
+
+## Names
+
+| Thing | Value |
+|---|---|
+| Repository | `print3d_translator` |
+| Package | `print3d_translator` |
+| Key = CLI | `p3dt` |
+| MCP server | `p3dt-mcp` (stdio) |
+| Settings prefix | `P3DT_` (`P3DT_ORCA`, `P3DT_ORCA_PROFILES`, `P3DT_OUT`, `P3DT_WORKERS`, `P3DT_TIMEOUT`) |
+| Output folder | `~/p3dt_runs` |
+
+## Research summary (OrcaSlicer CLI, Bambu .gcode.3mf), 2026-10-24
+
+OrcaSlicer stable is **v2.4.2** (2026-07-07); v2.5.0-alpha came out 2026-10-16. Pin 2.4.2 and record
+`--help` and the profile hashes in every result.
+
+### Reliable
+
+- **CLI actions.** `--slice N` (0 slices all plates), `--export-3mf`, `--outputdir`, `--load-settings "machine.json;process.json"`, `--load-filaments "f1.json;f2.json"`, `--export-settings`, `--curr-bed-type`, `--debug`/`--logfile`, `--datadir`. Any config key can be set as `--key=value`.
+- **Exit codes** are in `libslic3r/Utils.hpp`. Examples: -5 config, -17 process not compatible, -52 object outside the bed, -61 filament/bed mismatch, -66 filament cannot be mapped, -100 slicing error. The process status is the code mod 256, and 139 means a segfault.
+- **Profiles.** They live in `resources/profiles/BBL.json` (the index, with `sub_path`) and `BBL/{machine,process,filament}/*.json`. Inheritance is single-parent through `inherits`.
+  - Names follow a fixed pattern: `Bambu Lab H2D 0.4 nozzle`, `0.20mm Standard @BBL H2D`, `Bambu PLA Basic @BBL H2D`, plus nozzle suffixes for 0.2, 0.6 and 0.8.
+  - Model ids: H2D `O1D`, H2S `O1S`, P2S `N7`.
+- **H2D arrays.**
+  - `nozzle_diameter` has 2 entries; extruder-variant arrays have 4.
+  - `extruder_printable_area`: left 0..325, right 25..350 (both × 0..320). Bed 350×320, height 325.
+  - H2S is 340×320×340; P2S is 256³.
+- **Linux aarch64 builds exist** (AppImage and Flatpak). `--appimage-extract` avoids FUSE. The slicing CLI runs with no display.
+- **G-code markers** (BBL flavour): `; CHANGE_LAYER`, `; LAYER_HEIGHT:`, `; FEATURE:`, `; WIPE_TOWER_START/END`, `; FLUSH_START/END`. Header: `; HEADER_BLOCK_START` … `; total layer number`, `; total filament weight [g]`.
+- **Extrusion and heat.** Start G-code sets `M83` (relative E). Tool changes sit in `M620 S{n}A … T{n} … M621 S{n}A` blocks.
+
+### Fragile (design around it)
+
+1. **`--load-settings` ignores `inherits` in 2.4.2.** It silently uses defaults: one report got 17h32m instead of 3h17m (issue #14718; fixed after 2.4.2 by PR #15438). → We flatten profiles ourselves, and verify by re-reading `--export-settings`.
+2. **Compatibility is checked by name.** `compatible_printers` must contain the machine name, otherwise you get -17. → We set it in the flattened copies.
+3. **The bed type defaults to Cool Plate,** which H2D, H2S and P2S do not support. → Always pass `--curr-bed-type`.
+4. **`result.json` and `--pipe` are Linux-only.** → We rely on the exit code plus our own checks everywhere.
+5. **Boolean flags take no value** (`--min-save 1` makes `1` an input file). `--export-3mf` wants a relative name, together with `--outputdir`.
+6. **Multi-material mapping.** `--load-filament-ids` reportedly works only with STL inputs. For 3MF inputs it comes from per-object `extruder` metadata. → Spike S3.
+7. **`--orient` and `--arrange` are heuristics.** → We orient and place parts ourselves, and run with `--arrange 0 --orient 0`. Spike S2: does the CLI keep our positions?
+8. **Thumbnails are broken in the 2.4.2 CLI** (wrong GL version request), so `plate_1.png` is missing. → We write our own small placeholder PNG, or a top-view raster from our geometry.
+9. **The `.gcode.3mf` format is not officially specified.**
+   - Seen in practice: `Metadata/plate_N.gcode`, `plate_N.gcode.md5` (uppercase hex MD5 of the G-code bytes), `slice_info.config` (XML: `printer_model_id`, `nozzle_diameters`, `prediction`, `weight`, per-filament `used_m`/`used_g`), `model_settings.config`, `project_settings.config`, `plate_N.json`.
+   - CLI output lacks some keys that Bambu Studio writes (bambox's findings, P1S only). → Spike S4: diff against a real H2D/H2S/P2S file sliced in Bambu Studio.
+10. **Flush is done in firmware on these printers.**
+    - Purging is not in the G-code (`;VG1`, `SYNC T…`).
+    - Prime lines and purge-chute moves (`G150*`, `G130`) go outside the bed.
+    → The checker exempts the start and end blocks within known zones and compares filament against the part only.
+11. **Licence.** The bundled profiles are AGPL-3.0. → We never copy them into the repo; we read them from the installed OrcaSlicer. Test fixtures are small hand-written profile trees.
+
+### Projects looked at (learn, don't copy)
+
+- **jeff-roche/orca-mcp.** Temporary profile copies with merged overrides; falls back to `xvfb-run`.
+- **ShreddyKrueger75/claude-orcaslicer-mcp.** Flattens inheritance itself; pins `compatible_printers` and `curr_bed_type`.
+- **estampo/bambox.** The best notes on the `.gcode.3mf` format and what Bambu Connect validates.
+- **DMontgomery40/bambu-printer-mcp.** Warns that CLI slicing breaks when profiles drift.
+
+## Proposed study format
+
+One study = one plate. JSON, `{name: study}`. Units: mm, °C, %, mm/s.
+
+```json
+{
+  "bracket": {
+    "printer":   {"model": "H2D", "nozzle": 0.4, "plate": "textured_pei"},
+    "filaments": [
+      {"profile": "Bambu PLA Basic", "color": "#F0F0F0", "extruder": "right"},
+      {"type": "PETG", "brand": "Bambu", "variant": "HF", "extruder": "left"}
+    ],
+    "objects": [
+      {"part": {"step": "bracket.step"}, "filament": 1, "orient": "flat", "copies": 2},
+      {"part": {"b3dt": {"step": "/…/clip.step", "volume": 1834.2}}, "filament": 2,
+       "orient": {"rotate": [90, 0, 0]}}
+    ],
+    "intent": {
+      "preset": "standard",
+      "layer_height": 0.2, "walls": 3, "top_layers": 5, "bottom_layers": 4,
+      "infill": 25, "infill_pattern": "gyroid",
+      "supports": "tree", "support_angle": 40,
+      "brim": "auto"
+    },
+    "overrides": {"process": {"seam_position": "back"}, "filament": {"1": {"nozzle_temperature": [215]}}},
+    "expect": [{"quantity": "estimate.filament_g", "value": 22, "tol": 0.2}],
+    "run": {"timeout_s": 600}
+  }
+}
+```
+
+- **`printer`**
+  - `model`: H2D, H2S or P2S.
+  - `nozzle`: 0.2, 0.4, 0.6 or 0.8. For H2D, one size for both extruders in v1; mixed sizes need 2.5.
+  - `plate`: `textured_pei` (default), `smooth_pei`, `engineering` or `high_temp`. Cool plates are refused for these printers.
+- **`filaments`** (1–N; their order is the filament number 1..N)
+  - Give `profile` (an exact system name without the `@BBL …` suffix), or `type` + `brand` + `variant`. Validation lists the valid choices.
+  - `extruder` (H2D only): `left`, `right` or `auto`.
+- **`objects`**
+  - `part` is one of:
+    - `{"step": path}`
+    - `{"stl": path}`
+    - `{"3mf": path}`
+    - `{"goal": <b3dt goal>}`, built through build123d-translator when it is installed
+    - `{"b3dt": {"step", "volume"}}`: a b3dt result
+  - `filament` is a number into `filaments`.
+  - `orient`: `"as_is"`, `"flat"` (the largest planar or near-planar face down, computed by us), or `{"rotate": [rx, ry, rz]}` in degrees, applied X then Y then Z.
+  - `copies`, and an optional `at: [x, y]` (otherwise we place parts deterministically on a grid).
+- **`intent`**
+  - `preset` picks the base process profile: `fine`, `standard`, `strength` or `draft`, mapped per printer and nozzle to the profiles that exist.
+  - The other keys map to profile keys:
+    - `layer_height` → `layer_height`
+    - `walls` → `wall_loops`
+    - `infill` → `sparse_infill_density`
+    - `supports` → `enable_support` + `support_type`
+    - `support_angle` → `support_threshold_angle`
+    - `brim` → `brim_type` + `brim_width`
+    - and so on.
+  - Unknown keys are errors that name the right key.
+- **`overrides`.** Raw profile keys, only for keys that exist in the flattened profile. Validation reports unknown keys and type mismatches. They are written into temporary copies in the run folder; saved profiles are never touched.
+- **`expect` and `run`** work as in the other translators.
+
+## Proposed result (`<name>.json`)
+
+```json
+{
+  "ok": true, "reliable": true, "unreliable_because": [], "warnings": [],
+  "printer": {"model": "H2D", "model_id": "O1D", "nozzle": 0.4, "plate": "textured_pei",
+              "build_volume": [350, 320, 325]},
+  "profiles": {"machine": "Bambu Lab H2D 0.4 nozzle", "process": "0.20mm Standard @BBL H2D",
+               "filaments": ["Bambu PLA Basic @BBL H2D", "Bambu PETG HF @BBL H2D"],
+               "orca_version": "2.4.2", "sha256": {"machine": "…", "process": "…", "filaments": ["…"]},
+               "set": {"wall_loops": [2, 3], "sparse_infill_density": ["15%", "25%"]}},
+  "geometry": {"bracket#1": {"volume_mm3": 12034.5, "volume_from": "step", "area_mm2": 6120.0,
+                "rotation_deg": [0, 0, 0], "bbox": [[…], […]], "fits": true,
+                "bed_contact_mm2": 820.0, "overhang_mm2": 145.0, "overhang_frac": 0.024,
+                "thin_walls": {"min_mm": 0.9, "area_mm2": 0.0}}},
+  "estimate": {"time_s": 5420, "time": "1h30m20s", "filament_g": 21.7, "filament_m": 7.18,
+               "by_filament": [{"n": 1, "g": 15.1, "m": 5.0}, {"n": 2, "g": 6.6, "m": 2.18}]},
+  "gcode": {"layers": 140, "z_max": 28.0, "first_layer_z": 0.2,
+            "extruded_mm3": {"part": 9810.0, "support": 640.0, "brim": 120.0, "tower": 380.0},
+            "tool_changes": 22, "temps": {"nozzle": {"1": [220, 220], "2": [250, 255]}, "bed": [55, 55]}},
+  "checks": {"md5": {"passed": true}, "bounds": {"passed": true, "got": "…", "expected": "…"}, "…": {}},
+  "expect": [],
+  "files": {"gcode_3mf": "…/bracket.gcode.3mf", "gcode": "…/bracket.gcode",
+            "profiles": "…/profiles/", "log": "…/orca.log"},
+  "seconds": {"prepare": 0.8, "slice": 14.2, "check": 1.1},
+  "execution": {"host": "mac", "orca": "/Applications/OrcaSlicer.app/…", "timeout_s": 600}
+}
+```
+
+## The checker (independent of OrcaSlicer's own summary)
+
+`H` = hard: if it fails, the result is `reliable: false`. `W` = warning.
+
+**Before slicing (our geometry: STEP via OCP when available, otherwise the triangle mesh):**
+
+| Check | How | Kind |
+|---|---|---|
+| fits | Rotated bbox inside the printable volume; on H2D, inside the assigned extruder's printable area | H (no slicing) |
+| mesh | Watertight, consistent normals, positive volume (STL/3MF) | H |
+| bed_contact | Area of faces within 0.05 mm of z_min with normal ≈ −Z; warn when it is under 5% of the footprint or under a size limit, and suggest a brim | W |
+| overhang | Area of downward faces steeper than `support_angle`, not touching the bed; warn when supports are `none` | W |
+| thin_walls | Inward ray distance at sampled surface points, compared with the line width (about 1.125 × nozzle); report the minimum and the area below it | W |
+
+**After slicing (our own streaming G-code parser):**
+
+| Check | How | Kind |
+|---|---|---|
+| profile_roundtrip | `--export-settings` from the same run equals our flattened and overridden settings for every key we set and every key the checks use (this catches the inherits/defaults bug) | H |
+| archive | Zip opens; `Metadata/plate_1.gcode`, `.md5`, `slice_info.config`, `model_settings.config`, `project_settings.config` present; md5 (uppercase hex) matches; plain `.gcode` equals the archived one; `printer_model_id` and `nozzle_diameters` match the printer | H |
+| bounds | Every extruding move inside the printable area (per extruder on H2D) and 0 < z ≤ height. Travel moves inside the machine limits. Start and end blocks are allowed only in known zones (prime line, purge chute), per model | H |
+| layers | Z rises monotonically; the number of distinct print Zs = expected ± 1; every layer step equals `layer_height` (first layer = `initial_layer_print_height`) within 0.005 mm; z_max ≈ the part height | H |
+| first_layer | The first extrusion is at z = initial layer height, and some extrusion exists at that z | H |
+| temps | `M104`/`M109` per tool equals the filament's `nozzle_temperature(_initial_layer)` and lies inside its range; `M140`/`M190` equals the plate temperature for that filament and plate type | H |
+| filament_map | The tools used are exactly the ones the objects ask for; each object's extrusions come from its own tool | H |
+| extrusion_volume | E per `; FEATURE:` × filament cross-section, split into part, support, brim and tower. Part extrusion within ±20% of a model: shell (surface area × wall thickness, plus top/bottom skins) + infill% × the remaining volume, capped at the exact volume. Never more than 1.1 × volume | H |
+| footprint | Rasterized XY silhouette of each placed part (0.2 mm grid), grown by the line width + brim width (layer 1), the support margin (when supports are on) and the wipe tower rectangle. Any extrusion outside fails | H |
+| estimates | Header time equals `slice_info` prediction; g = m × area × density for each filament; our E total within 2% of the header length (flush excluded) | W |
+| expect | The study's `expect` entries | H |
+
+## Architecture (modules)
+
+| Module | Job |
+|---|---|
+| `format.py` | `study_format()`, `validate()` (with the available profile names per printer and nozzle) |
+| `orca.py` | Find OrcaSlicer (`P3DT_ORCA`, PATH, `/Applications/OrcaSlicer.app/Contents/MacOS/OrcaSlicer`, an extracted AppImage), its version, its profiles folder; run it in its own process group with a timeout |
+| `profiles.py` | The resolver: index from `BBL.json`, resolve by name through `sub_path`, merge root first, drop `inherits`, set `compatible_printers`, apply intent and overrides, write to the run folder, sha256 |
+| `geometry.py` | STEP (OCP, optional) / STL / 3MF reading, volume, orientation (`flat`), placement, one STL per object in bed coordinates plus the assemble list for the CLI, pre-slice checks |
+| `gcode.py` | Streaming G-code parser: G0/G1/G2/G3, G90/G91, M82/M83, T/M620/M621, temperatures, markers, per-layer and per-feature totals |
+| `gcode3mf.py` | Read and validate the archive; patch missing metadata if spike S4 says so |
+| `check.py` | The checks above → `checks`, `reliable` |
+| `runner.py` | `run_study()` end to end |
+| `api.py`, `cli.py`, `mcp_server.py` | The contract below |
+| `bench.py` | Benchmarks (cube, overhang test, two-colour part) with known layer counts and volumes |
+
+**API/CLI/MCP.**
+- API: `study_format`, `validate`, `run`, `start`, `status`, `read_file`, `tool_status`, `inputs` (the flattened profiles and the CLI command, without running), `bench`, `bench_status`.
+- MCP tools: `study_format`, `validate_studies`, `run_studies`, `study_status`, `get_inputs`, `get_file`, `run_benchmarks`, `bench_status`.
+- Local only: a slice takes seconds to a few minutes. Studies run in a local process pool, as in b3dt. No SLURM, `jobs`, `cancel` via queue, router or HTTP. A local `cancel` flag file is kept, because it is cheap.
+
+**Dependencies.**
+- Required: `numpy`.
+- `cad` extra: `build123d`, for STEP (exact volume, tessellation).
+- `mcp` and `test` extras.
+
+## Spikes before the main build
+
+- **S1. The CLI on each host.** The Mac first (primary). On Linux aarch64, download and extract the v2.4.2 aarch64 AppImage, find the apt libraries it needs, then `--help` and slice a 20 mm cube with flattened profiles.
+- **S2. Positions.** Use `--load-assemble-list` with `need_arrange: false` (see the state log), and check the positions in the G-code.
+- **S3. Multi-material.** Per-object `filaments` in the assemble list. On H2D, `filament_map` (1 = left, 2 = right) with `filament_map_mode` "Manual": check which nozzle prints what.
+- **S4. Archive keys.** Diff the CLI's `.gcode.3mf` against one sliced in Bambu Studio for the same printer. Needs a reference file from the user per model.
+
+## State log
+
+- 2026-10-24: Read the llm-translators template and the feat/b3dt references. Research done (above). Proposal written.
+- 2026-10-24: Proposal approved. Moved to the new repository print3d_translator. Local-only (Mac) decided.
+- 2026-10-24: **Sandbox (Linux aarch64, Ubuntu 22.04).**
+  - Its proxy blocks GitHub release assets, so the AppImage cannot be downloaded or run there; S1 moves to the Mac.
+  - Sparse-cloned OrcaSlicer v2.4.2 source instead (profiles BBL machine/process + 83 filament files, PrintConfig.cpp, OrcaSlicer.cpp, Config.cpp).
+- 2026-10-24: **Findings from the v2.4.2 source.**
+  - **`--load-assemble-list FILE` settles S2/S3 on paper.** JSON `{"plates": [{"plate_name", "need_arrange": false, "plate_params"?, "objects": [{"path" (.stl/.obj), "count", "filaments": [n], "pos_x"/"pos_y"/"pos_z": [mm], "print_params"?: {key: value}}]}]}`.
+    - Objects are translated by `pos` from their own coordinates.
+    - Plates with `need_arrange: false` are locked (not arranged).
+    - `filaments[0]` becomes the object's `extruder`.
+    → We write one STL per object, already oriented and placed in bed coordinates, with pos 0 and need_arrange false. Verify on the Mac; the footprint check catches a moved part anyway.
+  - **`printer_model_id` is probably empty in Orca's output.** In 2.4.2 the CLI looks it up in `resources/profiles/BBL/machine_full/<printer_model>.json`, which OrcaSlicer does not ship (it comes from Bambu Studio). → The packager fills it in from the machine_model profile (`model_id`). Verify in S4.
+  - **The CLI reads each settings file alone.** `load_from_json` reads one file, and `"from": "system"` sets the system name to the profile's own name. The compatibility check compares that name with `compatible_printers`. → Flattened copies keep their names, `from: system`, and no `inherits`.
+  - **Arrays for scalar keys.** BBL multi-extruder profiles store some scalar keys (`outer_wall_speed`, ...) as arrays, one per extruder variant. The loader joins them with ',' and deserializes the result. → Overrides keep the profile's shape (a list stays a list).
+  - **Plate names differ.** `not_support_bed_type` uses Bambu Studio names ("Smooth Cool Plate"), while `curr_bed_type` uses Orca's enum ("Cool Plate"). → `PLATE_ALIASES`.
+  - **Filament names are not uniform** (`Bambu PETG HF @BBL H2S` vs `@BBL P2S 0.4 nozzle` vs `@BBL H2D 0.4 nozzle`). Some profiles serve several nozzles (PETG Basic for the H2D 0.8 is the "0.6 nozzle" profile). → Choose by `compatible_printers`.
+  - **No Strength process for H2S/P2S.** "strength" falls back to Standard with `wall_loops` 4 and `sparse_infill_density` 25%, with a warning.
+  - **Arcs.** `enable_arc_fitting` is 1 in the BBL processes, so the G-code has G2/G3 and the parser must handle arcs.
+  - **`wrapping_exclude_area`** is set on the H2D (145..256 × 310..326) and P2S (153..216 × 235..256). It is a bed zone; the checker should flag extrusion in it.
+- 2026-10-24: **Step 1 done.** `profiles.py`, `data/orca_keys.json` (860 keys, 2.4.2), `tools/orca_keys.py`, 50 offline tests plus 12 against the real profiles (H2D/H2S/P2S × 4 nozzles × 4 filaments), all passing.
+  - Next: `orca.py` (find the binary, version, run with the assemble list).
+  - The Mac spike S1 (OrcaSlicer installed, `--help`, slice a cube) is needed first.
+
+## Open ideas
+
+- `orient: "min_support"`: search rotations by overhang area.
+- Variable layer height, ironing, fuzzy skin: out of scope for v1.
+- A top-view PNG thumbnail drawn from our own geometry.

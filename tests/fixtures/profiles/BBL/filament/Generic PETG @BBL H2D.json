@@ -1,0 +1,11 @@
+{
+    "type": "filament",
+    "name": "Generic PETG @BBL H2D",
+    "inherits": "Generic PETG @base",
+    "from": "system",
+    "instantiation": "true",
+    "compatible_printers": [
+        "Bambu Lab H2D 0.4 nozzle",
+        "Bambu Lab P2S 0.4 nozzle"
+    ]
+}

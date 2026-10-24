@@ -1,0 +1,8 @@
+{
+    "type": "machine",
+    "name": "Bambu Lab X9 0.4 nozzle",
+    "inherits": "fdm_bbl_3dp_001_common",
+    "from": "system",
+    "instantiation": "true",
+    "printer_model": "Bambu Lab X9"
+}

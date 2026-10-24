@@ -1,0 +1,11 @@
+{
+    "type": "process",
+    "name": "fdm_process_single_common",
+    "inherits": "fdm_process_common",
+    "from": "system",
+    "instantiation": "false",
+    "sparse_infill_pattern": "crosshatch",
+    "outer_wall_speed": [
+        "200"
+    ]
+}

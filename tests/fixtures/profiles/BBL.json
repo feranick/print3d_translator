@@ -1,0 +1,133 @@
+{
+    "name": "Bambulab",
+    "version": "00.00.00.01",
+    "description": "p3dt test fixture (hand-written)",
+    "machine_model_list": [
+        {
+            "name": "Bambu Lab H2D",
+            "sub_path": "machine/Bambu Lab H2D.json"
+        },
+        {
+            "name": "Bambu Lab P2S",
+            "sub_path": "machine/Bambu Lab P2S.json"
+        },
+        {
+            "name": "Bambu Lab X9",
+            "sub_path": "machine/Bambu Lab X9.json"
+        }
+    ],
+    "machine_list": [
+        {
+            "name": "Bambu Lab H2D 0.2 nozzle",
+            "sub_path": "machine/Bambu Lab H2D 0.2 nozzle.json"
+        },
+        {
+            "name": "Bambu Lab H2D 0.4 nozzle",
+            "sub_path": "machine/Bambu Lab H2D 0.4 nozzle.json"
+        },
+        {
+            "name": "Bambu Lab P2S 0.4 nozzle",
+            "sub_path": "machine/Bambu Lab P2S 0.4 nozzle.json"
+        },
+        {
+            "name": "Bambu Lab X9 0.4 nozzle",
+            "sub_path": "machine/Bambu Lab X9 0.4 nozzle.json"
+        },
+        {
+            "name": "fdm_bbl_3dp_001_common",
+            "sub_path": "machine/fdm_bbl_3dp_001_common.json"
+        },
+        {
+            "name": "fdm_bbl_3dp_002_common",
+            "sub_path": "machine/fdm_bbl_3dp_002_common.json"
+        },
+        {
+            "name": "fdm_machine_common",
+            "sub_path": "machine/fdm_machine_common.json"
+        }
+    ],
+    "process_list": [
+        {
+            "name": "0.10mm Standard @BBL H2D 0.2 nozzle",
+            "sub_path": "process/0.10mm Standard @BBL H2D 0.2 nozzle.json"
+        },
+        {
+            "name": "0.12mm Fine @BBL H2D",
+            "sub_path": "process/0.12mm Fine @BBL H2D.json"
+        },
+        {
+            "name": "0.12mm High Quality @BBL P2S",
+            "sub_path": "process/0.12mm High Quality @BBL P2S.json"
+        },
+        {
+            "name": "0.20mm Balanced Strength @BBL H2D",
+            "sub_path": "process/0.20mm Balanced Strength @BBL H2D.json"
+        },
+        {
+            "name": "0.20mm Standard @BBL H2D",
+            "sub_path": "process/0.20mm Standard @BBL H2D.json"
+        },
+        {
+            "name": "0.20mm Standard @BBL P2S",
+            "sub_path": "process/0.20mm Standard @BBL P2S.json"
+        },
+        {
+            "name": "0.24mm Standard @BBL P2S",
+            "sub_path": "process/0.24mm Standard @BBL P2S.json"
+        },
+        {
+            "name": "fdm_process_common",
+            "sub_path": "process/fdm_process_common.json"
+        },
+        {
+            "name": "fdm_process_dual_common",
+            "sub_path": "process/fdm_process_dual_common.json"
+        },
+        {
+            "name": "fdm_process_single_common",
+            "sub_path": "process/fdm_process_single_common_v2.json"
+        }
+    ],
+    "filament_list": [
+        {
+            "name": "Bambu PLA Basic @BBL H2D 0.2 nozzle",
+            "sub_path": "filament/Bambu PLA Basic @BBL H2D 0.2 nozzle.json"
+        },
+        {
+            "name": "Bambu PLA Basic @BBL H2D",
+            "sub_path": "filament/Bambu PLA Basic @BBL H2D.json"
+        },
+        {
+            "name": "Bambu PLA Basic @BBL P2S old",
+            "sub_path": "filament/Bambu PLA Basic @BBL P2S old.json"
+        },
+        {
+            "name": "Bambu PLA Basic @BBL P2S",
+            "sub_path": "filament/Bambu PLA Basic @BBL P2S.json"
+        },
+        {
+            "name": "Bambu PLA Basic @base",
+            "sub_path": "filament/Bambu PLA Basic @base.json"
+        },
+        {
+            "name": "Generic PETG @BBL H2D",
+            "sub_path": "filament/Generic PETG @BBL H2D.json"
+        },
+        {
+            "name": "Generic PETG @base",
+            "sub_path": "filament/Generic PETG @base.json"
+        },
+        {
+            "name": "fdm_filament_common",
+            "sub_path": "filament/fdm_filament_common.json"
+        },
+        {
+            "name": "fdm_filament_pet",
+            "sub_path": "filament/fdm_filament_pet.json"
+        },
+        {
+            "name": "fdm_filament_pla",
+            "sub_path": "filament/fdm_filament_pla.json"
+        }
+    ]
+}

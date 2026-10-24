@@ -1,0 +1,10 @@
+{
+    "type": "filament",
+    "name": "Bambu PLA Basic @BBL P2S",
+    "inherits": "Bambu PLA Basic @base",
+    "from": "system",
+    "instantiation": "true",
+    "compatible_printers": [
+        "Bambu Lab P2S 0.4 nozzle"
+    ]
+}

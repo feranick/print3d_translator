@@ -1,0 +1,11 @@
+{
+    "type": "process",
+    "name": "0.10mm Standard @BBL H2D 0.2 nozzle",
+    "inherits": "fdm_process_dual_common",
+    "from": "system",
+    "instantiation": "true",
+    "layer_height": "0.1",
+    "compatible_printers": [
+        "Bambu Lab H2D 0.2 nozzle"
+    ]
+}

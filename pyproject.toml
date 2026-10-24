@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "print3d-translator"
+version = "2026.10.24.1"
+description = "Print studies (part, Bambu Lab printer, filaments, intent) to OrcaSlicer profiles, sliced and independently checked .gcode.3mf files; CLI, API and MCP server. Never talks to a printer."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Nicola Ferralis", email = "ferralis@generalflash.com" }]
+license = { text = "MIT" }
+dependencies = ["numpy>=1.22"]
+
+[project.optional-dependencies]
+# STEP input (exact volume, tessellation) and build123d-translator goals
+cad = ["build123d>=0.9"]
+mcp = ["mcp>=1.2"]
+test = ["pytest>=7"]
+
+[project.scripts]
+p3dt = "print3d_translator.cli:main"
+p3dt-mcp = "print3d_translator.mcp_server:main"
+
+[tool.setuptools]
+packages = ["print3d_translator"]
+
+[tool.setuptools.package-data]
+print3d_translator = ["data/*.json"]
+
+[tool.pytest.ini_options]
+filterwarnings = ["ignore::DeprecationWarning:lib3mf.*"]

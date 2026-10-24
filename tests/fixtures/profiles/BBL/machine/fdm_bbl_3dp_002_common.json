@@ -1,0 +1,26 @@
+{
+    "type": "machine",
+    "name": "fdm_bbl_3dp_002_common",
+    "inherits": "fdm_machine_common",
+    "from": "system",
+    "instantiation": "false",
+    "printable_area": [
+        "0x0",
+        "350x0",
+        "350x320",
+        "0x320"
+    ],
+    "printable_height": "325",
+    "nozzle_diameter": [
+        "0.4",
+        "0.4"
+    ],
+    "min_layer_height": [
+        "0.08",
+        "0.08"
+    ],
+    "max_layer_height": [
+        "0.28",
+        "0.28"
+    ]
+}

@@ -1,0 +1,8 @@
+{
+    "type": "machine_model",
+    "name": "Bambu Lab P2S",
+    "model_id": "N7",
+    "nozzle_diameter": "0.4",
+    "default_bed_type": "Textured PEI Plate",
+    "not_support_bed_type": "Smooth Cool Plate;Textured Cool Plate"
+}

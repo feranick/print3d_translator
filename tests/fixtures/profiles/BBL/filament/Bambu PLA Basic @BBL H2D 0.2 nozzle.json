@@ -1,0 +1,14 @@
+{
+    "type": "filament",
+    "name": "Bambu PLA Basic @BBL H2D 0.2 nozzle",
+    "inherits": "Bambu PLA Basic @base",
+    "from": "system",
+    "instantiation": "true",
+    "compatible_printers": [
+        "Bambu Lab H2D 0.2 nozzle"
+    ],
+    "nozzle_temperature": [
+        "215",
+        "215"
+    ]
+}
