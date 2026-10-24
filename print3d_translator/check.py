@@ -1,7 +1,7 @@
 """check.py — independent checks of a sliced plate: the G-code (as gcode.py reads it) against the study,
 our flattened profiles and the placed geometry. Nothing here trusts OrcaSlicer's own summary; its
 estimates are only compared with ours.
-Version: 2026.10.24.3
+Version: 2026.10.24.5
 
 Each check is {passed, hard, why, got, expected, ...}. A failed hard check makes the result
 unreliable. The checks:
@@ -21,6 +21,8 @@ unreliable. The checks:
   footprint         no extrusion outside its allowed region: the object's silhouette + half a line
                     (object features), + brim, + support margin, the prime tower's own rectangle
   wrapping_area     no extrusion in the machine's wrapping-detection zone (soft)
+  shared_nozzle     (multi-extruder) filaments with different temperatures not on one nozzle (soft)
+  bed_vs_filaments  the bed not more than 10 C above a used filament's own bed temperature (soft)
   estimates         OrcaSlicer's filament lengths and weights = ours (soft)
 """
 from __future__ import annotations
@@ -199,6 +201,10 @@ def check_gcode(P: G.Parsed, resolved: dict, objects: list[dict], tower_bbox: li
     height = _f(mv("printable_height"), 1e9)
     ext_areas = [_poly(a) for a in _list(mv("extruder_printable_area"))] if mv("extruder_printable_area") else []
     fmap = filament_map or [int(_f(v)) for v in _list(cfg.get("filament_map"))] or None
+    if fmap and len(fmap) < len(fils):
+        # OrcaSlicer 2.4.2 may write one value for several filaments (auto map); its CLI gives the
+        # missing filaments the first value ("set filament_map of filament N to first value")
+        fmap = list(fmap) + [fmap[0]] * (len(fils) - len(fmap))
     bad_pts, worst = 0, None
     if printing.any():
         for t in np.unique(info[printing, 1]):
@@ -270,6 +276,7 @@ def check_gcode(P: G.Parsed, resolved: dict, objects: list[dict], tower_bbox: li
 
     # temperatures
     checks["temperatures"] = _temperatures(P, resolved, used)
+    checks.update(_compromises(resolved, used, fmap, ext_areas, checks["temperatures"]))
 
     # unlocated extrusion in the print
     unl = {k: round(v, 3) for k, v in P.unlocated_by_region.items()}
@@ -353,6 +360,39 @@ def _temperatures(P: G.Parsed, resolved: dict, used: list[int]) -> dict:
               got={"nozzle_start": got_first, "nozzle_in_print": {k: sorted(v) for k, v in seen.items()},
                    "bed_start": got_bed}, expected={"filaments": exp, "bed": [bed_first, bed_other]},
               problems=problems[:20])
+
+
+def _compromises(resolved: dict, used: list[int], fmap: list[int] | None, ext_areas: list, temps: dict) -> dict:
+    """Soft checks for prints that slice but compromise a filament:
+    shared_nozzle  (multi-extruder) two used filaments on one nozzle whose print temperatures differ
+                   by more than 15 C: the nozzle keeps reheating between them
+    bed_vs_filaments  the bed (one temperature for all) more than 10 C above a used filament's own bed
+                   temperature for this plate (OrcaSlicer's 'bed_temperature_too_high_than_filament')"""
+    out = {}
+    exp = temps.get("expected", {}).get("filaments", [])
+    if ext_areas and fmap and len(used) > 1:
+        groups = {}
+        for t in used:
+            if t < len(fmap):
+                groups.setdefault(fmap[t], []).append(t)
+        problems = []
+        for ext, ts in groups.items():
+            temps_t = [exp[t]["other"] for t in ts if t < len(exp)]
+            if len(temps_t) > 1 and max(temps_t) - min(temps_t) > 15:
+                problems.append(f"filaments {[t + 1 for t in ts]} share extruder {ext} "
+                                f"({'left' if ext == 1 else 'right'}) at {temps_t} C")
+        out["shared_nozzle"] = _c(not problems, "filaments with different print temperatures on separate nozzles "
+                                  "(set filaments[].extruder 'left'/'right')", hard=False,
+                                  got={"by_extruder": {str(k): [t + 1 for t in v] for k, v in groups.items()}},
+                                  problems=problems)
+    bed = temps.get("got", {}).get("bed_start")
+    if bed is not None and used:
+        over = [f"filament {t + 1}: bed {bed} C, its own {exp[t]['bed_first']} C" for t in used
+                if t < len(exp) and bed > exp[t]["bed_first"] + 10]
+        out["bed_vs_filaments"] = _c(not over, "the bed is not much hotter than any filament wants "
+                                     "(PLA on a PETG bed softens: elephant foot, warping)", hard=False,
+                                     got={"bed": bed}, problems=over)
+    return out
 
 
 def _volume(objects, vol, printing, obj_of_seg, cats, pv, lh, h1) -> dict:

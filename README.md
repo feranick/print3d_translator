@@ -116,6 +116,8 @@ Checks on every plate. A failed hard check makes the result `reliable: false`.
 | `extrusion_volume` | per object: extruded volume vs walls + top/bottom shells + infill of its exact volume (±25%), never above 1.1 × the volume | hard |
 | `footprint` | no extrusion outside its allowed region: the object's silhouette + half a line, + brim, + support margin (5 mm); the prime tower inside its declared box and apart from the objects | hard |
 | `travel`, `wrapping_area`, `estimates` | travel stays on the bed; nothing in the wrapping-detection zone; OrcaSlicer's filament lengths and weights equal ours (0.5%, 1%) | soft |
+| `shared_nozzle` | (H2D) filaments whose print temperatures differ by more than 15 °C are not on the same nozzle. OrcaSlicer's auto map can put PLA and PETG on one nozzle. | soft |
+| `bed_vs_filaments` | the bed is not more than 10 °C above a used filament's own bed temperature. PLA + PETG on one plate gets a 70 °C bed. | soft |
 
 **Tested on real slices.** On OrcaSlicer 2.4.2 slices (P2S cube, H2D two cubes with two filaments) every check passes:
 - filament lengths match OrcaSlicer's to 0.01 mm;
@@ -133,6 +135,7 @@ Ten deliberate faults were each caught by the expected check: a part moved by 5 
 
 | Version | Changes |
 |---|---|
+| 2026.10.24.5 | Soft checks `shared_nozzle` and `bed_vs_filaments`; a filament map shorter than the filament list is padded with its first value, as OrcaSlicer does. |
 | 2026.10.24.4 | Fix: every filament gets a `filament_colour` (the study's, or a distinct default with a warning). Without one, OrcaSlicer 2.4.2's CLI skips the flush-volume matrix and crashes (SIGSEGV) on any plate with 2+ filaments. Spike case P2S PLA + PETG with `--allow-mix-temp`. |
 | 2026.10.24.3 | `gcode.py` (streaming G-code reader), `gcode3mf.py` (archive checks, settings round trip, `printer_model_id` patch), `check.py` (the checks above); scipy dependency; spike cases to narrow down the H2D PLA + PETG crash. |
 | 2026.10.24.2 | `orca.py` (find, version, command with the assemble list, run in a process group with timeout and cancel, exit codes with fixes); `mesh.py` (STL in/out, box, transforms, volume); `tools/spike.py`; tests with a fake OrcaSlicer and one real slice (skipped without OrcaSlicer). |

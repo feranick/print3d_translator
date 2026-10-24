@@ -1,6 +1,6 @@
 """Tests of gcode.py, gcode3mf.py and check.py on synthetic G-code and archives (written here, in the
 OrcaSlicer/Bambu style), and on the spike outputs in debug/spike when they exist (skipped otherwise).
-Version: 2026.10.24.3
+Version: 2026.10.24.5
 """
 import copy
 import hashlib
@@ -192,6 +192,25 @@ def test_per_extruder_area():
     assert not res["checks"]["bounds"]["passed"]
     res = C.check_gcode(G.parse(text), r, [obj(at=(20.0, 60.0))], filament_map=[2])
     assert res["checks"]["bounds"]["passed"]
+
+
+def test_compromises_shared_nozzle_and_hot_bed():
+    temps = {"expected": {"filaments": [{"other": 220, "bed_first": 55}, {"other": 250, "bed_first": 70}]},
+             "got": {"bed_start": 70}}
+    areas = [C._poly("0x0,325x0,325x320,0x320"), C._poly("25x0,350x0,350x320,25x320")]
+    out = C._compromises({}, [0, 1], [1, 1], areas, temps)
+    assert not out["shared_nozzle"]["passed"] and not out["shared_nozzle"]["hard"]
+    assert not out["bed_vs_filaments"]["passed"] and "filament 1" in out["bed_vs_filaments"]["problems"][0]
+    out = C._compromises({}, [0, 1], [2, 1], areas, {**temps, "got": {"bed_start": 60}})
+    assert out["shared_nozzle"]["passed"] and out["bed_vs_filaments"]["passed"]
+    assert "shared_nozzle" not in C._compromises({}, [0, 1], [1, 1], [], temps)     # one-extruder printer
+
+
+def test_short_filament_map_is_padded_with_the_first_value():
+    text, _, _ = synth(at=(20.0, 60.0))
+    r = resolved(n_fil=2, ext_areas=["30x0,256x0,256x256,30x256", "0x0,226x0,226x256,0x256"])
+    res = C.check_gcode(G.parse(text.replace("; filament_map = 1", "; filament_map = 2")), r, [obj(at=(20.0, 60.0))])
+    assert res["checks"]["bounds"]["passed"]               # filament 1 -> extruder 2 reaches x = 20
 
 
 def test_inside_polygon_and_sampling():

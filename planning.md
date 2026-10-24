@@ -304,6 +304,17 @@ One study = one plate. JSON, `{name: study}`. Units: mm, °C, %, mm/s.
     - the H2D cases now slice, or stop on a clean code such as -62 for PLA + PETG;
     - p2s_pla_petg_mixtemp tells whether `--allow-mix-temp` lets PLA + PETG through.
     Then decide the study key for mixing temperatures (e.g. `allow_mix_temp`) and validation's message.
+- 2026-10-24: **Crash cases rerun on the Mac (2026.10.24.4): every H2D case slices.**
+  - Cases: PETG+PETG, PLA+PETG (manual, auto, `--allow-mix-temp`, Generic PETG), PETG alone.
+  - Our checks rate all of them reliable. The settings round trip matches 268–331 keys with 0 differences. Temperatures: PLA 220, PETG HF 245, Generic PETG 255 on the second nozzle (from `M620.10 A1 P`), bed 70 (`by_highest_temp`).
+  - Every H2D slice_info has the warning `bed_temperature_too_high_than_filament` (level 3), even PETG alone. Results should list slice_info warnings.
+  - **H2D auto map:** PLA + PETG both went to extruder 1 (left). slice_info and project_settings write `filament_map` with a single value "1" for 2 filaments; the CLI pads missing entries with the first value, and check.py now does the same. The new soft check `shared_nozzle` flags it.
+  - **P2S PLA + PETG:**
+    - without the flag: -62 FILAMENTS_DIFFERENT_TEMP, a clean refusal;
+    - with `--allow-mix-temp`: -102 GCODE_PATH_IN_UNPRINTABLE_AREA. The prime tower went to OrcaSlicer's built-in default (165, 250), about 24 mm deep, which is off the 256 mm P2S bed. With a locked plate (need_arrange false) it is not moved.
+  - → **Placement must place the prime tower.** Set process `wipe_tower_x`/`wipe_tower_y` (Floats, one per plate). OrcaSlicer keeps them when present (`has_wipe_tower_position`). Choose a free spot on the bed, clear of the parts and brims, sized prime_tower_width × about prime_tower_width + margin. Observed footprints: H2D 31 × 27 mm (width 60), P2S 24 × 24 mm (width 35).
+  - → Study key `allow_mix_temp: true` (passes `--allow-mix-temp`). Validation warns about the shared bed temperature, and `bed_vs_filaments` reports it.
+  - **2026.10.24.5:** soft checks `shared_nozzle` and `bed_vs_filaments`; short filament maps padded. 106 tests pass in the sandbox.
 
 ## Open ideas
 
