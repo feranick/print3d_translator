@@ -1,0 +1,124 @@
+{
+ "cube_p2s": {
+  "printer": {
+   "model": "P2S",
+   "nozzle": 0.4
+  },
+  "filaments": [
+   {
+    "profile": "Bambu PLA Basic",
+    "color": "#FFFFFF"
+   }
+  ],
+  "objects": [
+   {
+    "name": "cube",
+    "part": {
+     "stl": "cube20.stl"
+    }
+   }
+  ],
+  "expect": [
+   {
+    "quantity": "objects.cube.volume_mm3",
+    "value": 8000,
+    "tol": 1e-06
+   }
+  ]
+ },
+ "slabs_h2s_petg": {
+  "printer": {
+   "model": "H2S",
+   "nozzle": 0.4
+  },
+  "filaments": [
+   {
+    "profile": "Bambu PETG HF",
+    "color": "#202020"
+   }
+  ],
+  "objects": [
+   {
+    "name": "slab",
+    "part": {
+     "stl": "slab.stl"
+    },
+    "copies": 3
+   }
+  ],
+  "intent": {
+   "preset": "strength",
+   "infill": 30,
+   "infill_pattern": "gyroid",
+   "brim": "none"
+  }
+ },
+ "two_color_h2d": {
+  "printer": {
+   "model": "H2D",
+   "nozzle": 0.4
+  },
+  "filaments": [
+   {
+    "profile": "Bambu PLA Basic",
+    "color": "#FF0000",
+    "extruder": "left"
+   },
+   {
+    "profile": "Bambu PLA Matte",
+    "color": "#0000FF",
+    "extruder": "right"
+   }
+  ],
+  "objects": [
+   {
+    "name": "red",
+    "part": {
+     "stl": "cube20.stl"
+    },
+    "filament": 1
+   },
+   {
+    "name": "blue",
+    "part": {
+     "stl": "cube20.stl"
+    },
+    "filament": 2
+   }
+  ],
+  "intent": {
+   "layer_height": 0.16
+  }
+ },
+ "pla_petg_p2s_mixed": {
+  "printer": {
+   "model": "P2S"
+  },
+  "allow_mix_temp": true,
+  "filaments": [
+   {
+    "profile": "Bambu PLA Basic",
+    "color": "#FFFFFF"
+   },
+   {
+    "profile": "Bambu PETG HF",
+    "color": "#000000"
+   }
+  ],
+  "objects": [
+   {
+    "name": "pla",
+    "part": {
+     "stl": "cube20.stl"
+    }
+   },
+   {
+    "name": "petg",
+    "part": {
+     "stl": "cube20.stl"
+    },
+    "filament": 2
+   }
+  ]
+ }
+}

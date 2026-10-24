@@ -1,7 +1,7 @@
 # print3d_translator: planning
 
 Session context. A new chat starts with "Read planning.md and start."
-Status: **proposal approved** (2026-10-24). Building step by step (see "State log").
+Status: **complete end to end, 2026.10.24.6** (2026-10-24); verifying on the Mac (see "State log").
 
 ## Decisions (2026-10-24)
 
@@ -315,6 +315,28 @@ One study = one plate. JSON, `{name: study}`. Units: mm, °C, %, mm/s.
   - → **Placement must place the prime tower.** Set process `wipe_tower_x`/`wipe_tower_y` (Floats, one per plate). OrcaSlicer keeps them when present (`has_wipe_tower_position`). Choose a free spot on the bed, clear of the parts and brims, sized prime_tower_width × about prime_tower_width + margin. Observed footprints: H2D 31 × 27 mm (width 60), P2S 24 × 24 mm (width 35).
   - → Study key `allow_mix_temp: true` (passes `--allow-mix-temp`). Validation warns about the shared bed temperature, and `bed_vs_filaments` reports it.
   - **2026.10.24.5:** soft checks `shared_nozzle` and `bed_vs_filaments`; short filament maps padded. 106 tests pass in the sandbox.
+- 2026-10-24: **Step 4 (2026.10.24.6): the translator is complete end to end.**
+  - Written: `geometry.py`, `placement.py`, `format.py`, `runner.py`, `api.py`, `cli.py`, `mcp_server.py`, the benchmarks, `examples/studies.json`, `tests/fake_orca.py`, `tests/test_geometry_placement.py`, `tests/test_runner_api.py`.
+  - **Geometry:**
+    - STEP and b3dt via build123d `tessellate(0.01, 0.1)`. Exact volume from OpenCascade; a b3dt result's volume is cross-checked against its STEP.
+    - 3MF: core spec plus production components.
+    - `flat` = the largest coplanar same-facing area down; ties go to the lower height.
+    - Checks: fits (hard), closed mesh (hard for STL/3MF), bed contact, overhang (support_threshold_angle), thin walls (ray casting, fixed seed).
+    - On b3dt's example parts it takes 0.2–1.7 s per part, and exact vs mesh volume agree within 0.04%.
+  - **Placement:** a 1 mm grid with integral images. Each part gets a halo of 3 mm + brim width and stays in its extruder's area and out of the wrapping zone. `at` is kept, the largest part goes to the centre, and the prime tower (prime_tower_width square + 5 mm) goes in a back corner reachable by every extruder used. The process gets `wipe_tower_x/y`.
+  - **Validation:** OrcaSlicer's exact filament compatibility rule from `Print::check_multi_filaments_compatibility`: each filament's print temperature must lie in the other's `nozzle_temperature_range_low..high`. On one nozzle (or one H2D nozzle) that is an error unless `allow_mix_temp`.
+  - **API:** requests run in a background process (`cli run-request`, P3DT_WORKERS threads). status reads the files; cancel writes a flag file; inputs runs prepare without slicing; read_file is limited to P3DT_OUT.
+  - **MCP:** 9 tools, stdio only, 17 lines of instructions.
+  - **Tests:** 143 pass and 14 skip in the sandbox (skips: real OrcaSlicer, real profiles in the default path). The fake OrcaSlicer covers ok, shift, hot, fail17, crash and sleep (timeout and cancel).
+  - **To verify on the Mac:**
+    1. `pytest -q` with OrcaSlicer: the real benchmark test.
+    2. `p3dt bench`.
+    3. `p3dt run examples/studies.json`.
+    Watch:
+    - Does OrcaSlicer keep our `wipe_tower_x/y`? If it changes them, settings_roundtrip will show `process.wipe_tower_x`; exempt it and check the tower box instead.
+    - The P2S PLA+PETG `allow_mix_temp` example: the tower must now be on the bed.
+    - The auto-brim width on the H2S slabs.
+  - Then: S4 (compare our .gcode.3mf with one from Bambu Studio per printer), real STEP parts from b3dt, and an overhang part with tree supports (support margin).
 
 ## Open ideas
 
