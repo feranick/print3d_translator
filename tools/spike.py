@@ -2,7 +2,7 @@
 """spike.py — runs OrcaSlicer on small cases to learn what the CLI really does (spikes S2, S3, S4):
 positions from the assemble list, filament mapping on the H2D, the .gcode.3mf layout and md5, and
 whether the settings sliced (project_settings.config) equal our flattened profiles.
-Version: 2026.10.24.3
+Version: 2026.10.24.4
 
     python tools/spike.py [case ...]        cases: p2s_cube, p2s_cube_minsave, h2d_two_pla, h2d_pla_petg,
                                             and CRASH_CASES (narrowing down the PLA + PETG crash)
@@ -62,6 +62,10 @@ CRASH_CASES = {
                      "objects": [{"size": [20, 20, 10], "at": [80, 128], "filament": 1},
                                  {"size": [20, 20, 10], "at": [176, 128], "filament": 2}],
                      "filaments": [{"profile": "Bambu PLA Basic"}, {"profile": "Bambu PETG HF"}]},
+    "p2s_pla_petg_mixtemp": {"printer": {"model": "P2S"}, "extra": ["--allow-mix-temp"],
+                             "objects": [{"size": [20, 20, 10], "at": [80, 128], "filament": 1},
+                                         {"size": [20, 20, 10], "at": [176, 128], "filament": 2}],
+                             "filaments": [{"profile": "Bambu PLA Basic"}, {"profile": "Bambu PETG HF"}]},
 }
 CASES.update(CRASH_CASES)
 

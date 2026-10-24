@@ -292,6 +292,18 @@ One study = one plate. JSON, `{name: study}`. Units: mm, °C, %, mm/s.
   - Fixed: the volume model counted a bottom shell when `bottom_shell_layers` = 0.
   - **Open: the PLA + PETG crash on the H2D.** The log ends inside `update_values_to_printer_extruders_for_multiple_filaments`; the same "variant index out of range" warnings appear in the run that succeeded. `CRASH_CASES` in tools/spike.py narrow it down: PETG + PETG, auto map, `--allow-mix-temp`, Generic PETG, PETG alone, PLA + PETG on the P2S. Run `python tools/spike.py crash` on the Mac.
   - Next: geometry checks before slicing (`geometry.py`: STEP/STL/3MF, orientation, overhang, bed contact, thin walls, fit), then `runner.py`, `format.py`, `api.py`, `cli.py`, `mcp_server.py`.
+- 2026-10-24: **The crash is explained (2026.10.24.4).**
+  - The crash cases on the Mac:
+    - every H2D plate with 2 filaments and no colours crashed (PETG+PETG, PLA+PETG, auto map, `--allow-mix-temp`, Generic PETG);
+    - PETG alone sliced;
+    - the P2S with PLA + PETG refused cleanly with -62 FILAMENTS_DIFFERENT_TEMP.
+  - The macOS crash report: a null read in `calc_filament_change_info_by_toolorder` ← `reorder_extruders_for_minimum_flush_volume` ← `Print::_make_wipe_tower`.
+  - The log diff shows the cause: "no filament colors found in projects". OrcaSlicer.cpp computes `flush_volumes_matrix` only when the project has `filament_colour`, and no BBL filament profile sets it. h2d_two_pla worked only because the spike gave colours.
+  - Fix: `profiles.resolve` sets `filament_colour` on every filament (the study's `color`, or a distinct default with a warning for 2+ filaments).
+  - **Open: rerun `python tools/spike.py crash`.** Expected:
+    - the H2D cases now slice, or stop on a clean code such as -62 for PLA + PETG;
+    - p2s_pla_petg_mixtemp tells whether `--allow-mix-temp` lets PLA + PETG through.
+    Then decide the study key for mixing temperatures (e.g. `allow_mix_temp`) and validation's message.
 
 ## Open ideas
 

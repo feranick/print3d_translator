@@ -1,6 +1,6 @@
 """Tests of the profile resolver on a hand-written profile tree (tests/fixtures/profiles), and on the
 installed OrcaSlicer's profiles when they are found (skipped otherwise).
-Version: 2026.10.24.1
+Version: 2026.10.24.4
 """
 import json
 from pathlib import Path
@@ -223,6 +223,17 @@ def test_model_without_processes(v):
     assert mm["model_id"] == "X9"
     with pytest.raises(P.ProfileError, match="no process profile"):
         P.resolve(v, {"printer": {"model": "X9"}, "filaments": [{"type": "PETG"}]})
+
+
+def test_every_filament_gets_a_color(v):
+    # without filament_colour OrcaSlicer 2.4.2 skips the flush matrix and crashes with 2+ filaments
+    s = {"printer": {"model": "H2D"}, "filaments": [{"profile": "Bambu PLA Basic"}, {"type": "PETG"}]}
+    r = P.resolve(v, s)
+    cols = [f["filament_colour"] for f in r["filaments"]]
+    assert cols == [["#FFFFFF"], ["#000000"]] and len(set(map(tuple, cols))) == 2
+    assert sum("has no color" in w for w in r["warnings"]) == 2
+    one = P.resolve(v, study())
+    assert one["filaments"][0]["filament_colour"] == ["#FFFFFF"] and not any("color" in w for w in one["warnings"])
 
 
 def test_color(v):

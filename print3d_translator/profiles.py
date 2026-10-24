@@ -1,7 +1,7 @@
 """profiles.py — OrcaSlicer system profiles: find them, index them, flatten them, choose the machine,
 process and filament profiles for a study, apply the intent and overrides, and write the flattened
 copies the OrcaSlicer CLI loads.
-Version: 2026.10.24.1
+Version: 2026.10.24.4
 
 Why we flatten: OrcaSlicer 2.4.2's --load-settings / --load-filaments read one JSON file and do not
 follow "inherits" (OrcaSlicer issue #14718): every key a leaf profile does not set silently falls back
@@ -56,6 +56,8 @@ PRESETS = {
 }
 
 SUPPORTS = {"none": None, "auto": "normal(auto)", "tree": "tree(auto)"}
+# filament colours when the study gives none (distinct, so flush volumes are not underestimated)
+DEFAULT_COLORS = ["#FFFFFF", "#000000", "#FF0000", "#0000FF", "#00A000", "#FFD700", "#808080", "#FF8000"]
 EXTRUDERS = {"left": 1, "right": 2}      # H2D: filament_map values (extruder_printable_area[0] is the left one)
 
 
@@ -480,8 +482,14 @@ def resolve(v: Vendor, study: dict) -> dict:
                            f"1..{len(filaments)}")
 
     for i, (cfg, fs) in enumerate(zip(filaments, fils_spec), start=1):
-        if fs.get("color"):
-            _set(cfg, "filament_colour", fs["color"], changes, f"filament.{i}")
+        # Every filament gets a colour. No BBL filament profile sets filament_colour, and without one
+        # OrcaSlicer 2.4.2's CLI skips the flush-volume matrix; with 2+ filaments it then crashes
+        # (SIGSEGV in calc_filament_change_info_by_toolorder). Flush volumes depend on the colours.
+        color = fs.get("color") or DEFAULT_COLORS[(i - 1) % len(DEFAULT_COLORS)]
+        if not fs.get("color") and len(fils_spec) > 1:
+            warnings.append(f"filament {i} has no color: used {color} (flush volumes between filaments depend "
+                            f"on their colors; give filaments[{i - 1}].color)")
+        _set(cfg, "filament_colour", color, changes, f"filament.{i}")
         if not cfg.get(temp_key) or cfg.get(temp_key) in (["0"], "0"):
             warnings.append(f"filament {i} ({cfg['name']}) has no {temp_key}: is the {bed_type} right for it?")
 

@@ -133,6 +133,7 @@ Ten deliberate faults were each caught by the expected check: a part moved by 5 
 
 | Version | Changes |
 |---|---|
+| 2026.10.24.4 | Fix: every filament gets a `filament_colour` (the study's, or a distinct default with a warning). Without one, OrcaSlicer 2.4.2's CLI skips the flush-volume matrix and crashes (SIGSEGV) on any plate with 2+ filaments. Spike case P2S PLA + PETG with `--allow-mix-temp`. |
 | 2026.10.24.3 | `gcode.py` (streaming G-code reader), `gcode3mf.py` (archive checks, settings round trip, `printer_model_id` patch), `check.py` (the checks above); scipy dependency; spike cases to narrow down the H2D PLA + PETG crash. |
 | 2026.10.24.2 | `orca.py` (find, version, command with the assemble list, run in a process group with timeout and cancel, exit codes with fixes); `mesh.py` (STL in/out, box, transforms, volume); `tools/spike.py`; tests with a fake OrcaSlicer and one real slice (skipped without OrcaSlicer). |
 | 2026.10.24.1 | Project skeleton; profile resolver (`profiles.py`) with intent and overrides; OrcaSlicer key data (2.4.2); tests on a hand-written profile tree and on the real profiles. |
