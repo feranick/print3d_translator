@@ -1,6 +1,6 @@
 """gcode3mf.py — the Bambu .gcode.3mf archive: read it, check its structure, compare the settings it
 was sliced with against ours, and fill in what OrcaSlicer's CLI leaves out.
-Version: 2026.10.24.3
+Version: 2026.10.24.8
 
 Layout written by OrcaSlicer 2.4.2 (--export-3mf after --slice), as seen on the P2S and H2D:
   [Content_Types].xml, _rels/.rels, 3D/3dmodel.model (+ 3D/Objects/*.model without --min-save),
@@ -11,7 +11,8 @@ Layout written by OrcaSlicer 2.4.2 (--export-3mf after --slice), as seen on the 
   filament_sequence.json. No thumbnails (the 2.4.2 CLI cannot render them).
 
 OrcaSlicer 2.4.2 leaves slice_info 'printer_model_id' empty (it looks for Bambu Studio's
-profiles/BBL/machine_full/, which OrcaSlicer does not ship): patch_model_id() writes it.
+profiles/BBL/machine_full/, which OrcaSlicer does not ship), and on the P2S writes an uninitialised
+'first_layer_time' (3.07e32): patch_model_id() fixes both.
 """
 from __future__ import annotations
 
@@ -23,6 +24,8 @@ import tempfile
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
+
+FIRST_LAYER_TIME_MAX = 1e7     # s; above this slice_info's first_layer_time is garbage
 
 REQUIRED = ("[Content_Types].xml", "_rels/.rels", "3D/3dmodel.model", "Metadata/slice_info.config",
             "Metadata/model_settings.config", "Metadata/project_settings.config")
@@ -112,6 +115,14 @@ def check_archive(a: dict, plain_gcode: bytes | None, model_id: str | None, nozz
         c["printer_model_id"] = {"passed": bool(model_id) and md.get("printer_model_id") == model_id,
                                  "got": md.get("printer_model_id"), "expected": model_id,
                                  "why": "the printer refuses a file for another model"}
+        flt = md.get("first_layer_time")
+        try:
+            flt_v = float(flt) if flt is not None else 0.0
+        except ValueError:
+            flt_v = float("nan")
+        c["slice_info_values"] = {"passed": 0 <= flt_v < FIRST_LAYER_TIME_MAX, "hard": False, "got": {"first_layer_time": flt},
+                                  "why": "slice_info values are sane (OrcaSlicer 2.4.2 can write an uninitialised "
+                                         "first_layer_time; the translator resets it)"}
         noz = [float(v) for v in re.split(r"[ ,]+", md.get("nozzle_diameters", "").strip()) if v]
         c["nozzle_diameters"] = {"passed": bool(noz) and all(abs(v - nozzle) < 1e-6 for v in noz),
                                  "got": noz, "expected": nozzle}
@@ -211,12 +222,22 @@ def roundtrip(machine: dict, process: dict, filaments: list[dict], project: dict
 # ---------------------------------------------------------------- patching
 
 def patch_model_id(path: str | Path, model_id: str, plate: int = 1) -> bool:
-    """Writes printer_model_id into slice_info.config when it is empty or different; the G-code and its
-    md5 are not touched. Returns True if the archive was rewritten."""
+    """Fixes slice_info.config in place: writes printer_model_id (OrcaSlicer 2.4.2 leaves it empty), and
+    resets first_layer_time to 0 when OrcaSlicer wrote garbage (seen on the P2S: 3.07e32, an uninitialised
+    value). The G-code and its md5 are not touched. Returns True if the archive was rewritten."""
     path = Path(path)
     with zipfile.ZipFile(path) as z:
         data = z.read("Metadata/slice_info.config").decode("utf-8")
     new = re.sub(r'(<metadata key="printer_model_id" value=")[^"]*(")', rf'\g<1>{model_id}\g<2>', data, count=1)
+
+    def fix_flt(m):
+        try:
+            v = float(m.group(2))
+        except ValueError:
+            v = float("nan")
+        return m.group(0) if 0 <= v < FIRST_LAYER_TIME_MAX else f'{m.group(1)}0.000000{m.group(3)}'
+
+    new = re.sub(r'(<metadata key="first_layer_time" value=")([^"]*)(")', fix_flt, new, count=1)
     if new == data:
         return False
     tmp = Path(tempfile.mkstemp(suffix=".3mf", dir=path.parent)[1])

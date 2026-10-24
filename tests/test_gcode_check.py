@@ -357,3 +357,22 @@ def test_bed_follows_the_layers_first_filament():
     assert not res["checks"]["bed_vs_filaments"]["passed"]          # PLA part on a 70 C bed: a warning
     bad = C.check_gcode(G.parse(synth(extra_layer_lines="T1\nM140 S90\nG1 X50 Y60 E0.1\nT0")[0]), r, [obj()])
     assert not bad["checks"]["temperatures"]["passed"]
+
+
+def test_patch_resets_garbage_first_layer_time(tmp_path):
+    g = b"; CHANGE_LAYER\nG1 X1 E1\n"
+    p = make_archive(tmp_path / "f.3mf", g, model_id="N7")
+    with zipfile.ZipFile(p) as z:
+        items = {n: z.read(n) for n in z.namelist()}
+    si = items["Metadata/slice_info.config"].decode().replace(
+        '<metadata key="index" value="1"/>',
+        '<metadata key="index" value="1"/>\n    <metadata key="first_layer_time" value="307348170571033591697770805198848.000000"/>')
+    items["Metadata/slice_info.config"] = si.encode()
+    with zipfile.ZipFile(p, "w") as z:
+        for n, b in items.items():
+            z.writestr(n, b)
+    assert not A.check_archive(A.read(p), g, "N7", 0.4, 1)["slice_info_values"]["passed"]
+    assert A.patch_model_id(p, "N7") is True
+    a = A.read(p)
+    assert a["slice_info"]["plates"][0]["metadata"]["first_layer_time"] == "0.000000"
+    assert A.check_archive(a, g, "N7", 0.4, 1)["slice_info_values"]["passed"] and a["gcode"] == g

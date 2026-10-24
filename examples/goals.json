@@ -1,0 +1,100 @@
+{
+ "s4_bracket": {
+  "features": [
+   {
+    "kind": "base_box",
+    "params": {
+     "w": 80,
+     "d": 50,
+     "h": 12
+    }
+   },
+   {
+    "kind": "boss_cyl",
+    "params": {
+     "r": 10,
+     "x": 0,
+     "y": 0,
+     "h": 15
+    }
+   },
+   {
+    "kind": "hole",
+    "params": {
+     "r": 5,
+     "x": 0,
+     "y": 0,
+     "at": [
+      0,
+      0,
+      27
+     ]
+    }
+   },
+   {
+    "kind": "hole",
+    "params": {
+     "r": 3,
+     "x": 30,
+     "y": 17
+    }
+   },
+   {
+    "kind": "mirror",
+    "params": {
+     "ax": 1,
+     "ay": 0,
+     "az": 0
+    }
+   },
+   {
+    "kind": "hole",
+    "params": {
+     "r": 3,
+     "x": 30,
+     "y": -17
+    }
+   },
+   {
+    "kind": "mirror",
+    "params": {
+     "ax": 1,
+     "ay": 0,
+     "az": 0
+    }
+   },
+   {
+    "kind": "fillet_vertical",
+    "params": {
+     "r": 4
+    }
+   }
+  ]
+ },
+ "overhang_shelf": {
+  "features": [
+   {
+    "kind": "base_box",
+    "params": {
+     "w": 20,
+     "d": 20,
+     "h": 30
+    }
+   },
+   {
+    "kind": "boss_box",
+    "params": {
+     "w": 20,
+     "d": 5,
+     "x": 10,
+     "y": 0,
+     "z": 27.5,
+     "h": 25,
+     "nx": 1,
+     "ny": 0,
+     "nz": 0
+    }
+   }
+  ]
+ }
+}

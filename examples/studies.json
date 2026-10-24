@@ -120,5 +120,55 @@
     "filament": 2
    }
   ]
+ },
+ "bracket_step_p2s": {
+  "printer": {
+   "model": "P2S",
+   "nozzle": 0.4
+  },
+  "filaments": [
+   {
+    "profile": "Bambu PLA Basic",
+    "color": "#FFFFFF"
+   }
+  ],
+  "objects": [
+   {
+    "name": "bracket",
+    "part": {
+     "step": "s4_bracket.step"
+    }
+   }
+  ],
+  "expect": [
+   {
+    "quantity": "objects.bracket.volume_mm3",
+    "value": 49069.832,
+    "tol": 1e-06
+   }
+  ]
+ },
+ "shelf_tree_supports_p2s": {
+  "printer": {
+   "model": "P2S",
+   "nozzle": 0.4
+  },
+  "filaments": [
+   {
+    "profile": "Bambu PLA Basic",
+    "color": "#FFFFFF"
+   }
+  ],
+  "objects": [
+   {
+    "name": "shelf",
+    "part": {
+     "step": "overhang_shelf.step"
+    }
+   }
+  ],
+  "intent": {
+   "supports": "tree"
+  }
  }
 }

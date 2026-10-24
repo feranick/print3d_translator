@@ -141,6 +141,7 @@ Settings, read from the environment:
 | `archive_layout` | the `.gcode.3mf` holds `Metadata/plate_1.gcode`, its md5, `slice_info.config`, `model_settings.config`, `project_settings.config` | hard |
 | `md5` | `plate_1.gcode.md5` = upper-case hex MD5 of the G-code; the plain `.gcode` is the same file | hard |
 | `printer_model_id` | `slice_info.config` names the printer (H2D `O1D`, H2S `O1S`, P2S `N7`); OrcaSlicer 2.4.2 leaves it empty, so it is filled in | hard |
+| `slice_info_values` | `first_layer_time` is sane. On the P2S, OrcaSlicer 2.4.2 writes an uninitialised 3.07e32, which is reset to 0. | soft |
 | `nozzle_diameters`, `filament_map` | `slice_info` has the study's nozzle and filament → extruder map | hard |
 | `settings_roundtrip` | every setting OrcaSlicer knows that we wrote equals what it sliced with (`project_settings.config`). Catches the CLI's silent fallback to defaults. | hard |
 | `objects_present` | every placed object is printed, and nothing else | hard |
@@ -170,6 +171,12 @@ On those slices:
 
 Ten deliberate faults were each caught by the expected check: a part moved by 5 mm, a stray blob, a move off the bed, a dropped layer, a wrong nozzle or bed temperature, swapped filaments, and a study asking for other layers or walls.
 
+**b3dt → p3dt chain** (2026-10-24, on the Mac): parts built by build123d-translator's MCP server, given to p3dt as `{b3dt: {step, volume}}`. All reliable:
+- the bracket (49,069.8 mm³) on the P2S, H2S and H2D: 135 layers, 21.0 g, extruded volume 0.993 of the model;
+- the shelf (a 25 × 20 mm overhang at z = 25):
+  - without supports, `overhang` reports the 500 mm² underside;
+  - with tree supports, 1438 mm³ of support from z 0.2 to 24.8, all within the part's silhouette.
+
 **Benchmarks** (`p3dt bench`, on generated boxes with exact volumes):
 - `p2s_cube`: 20 mm PLA cube, 100 layers, 8000 mm³;
 - `h2s_fine_copies`: three PETG slabs, fine preset, 3 mm brim;
@@ -185,6 +192,12 @@ A benchmark passes when the result is reliable and its expected values hold.
 - **On the H2D, `M620.10 A1 … P` is the incoming filament's print temperature** (`temperatures`).
 - **An auto brim is at most 10 mm wide, and supports stay within 5 mm of the silhouette** (`footprint`).
 - **Every filament needs a colour.** Without one, the 2.4.2 CLI crashes on 2+ filaments, so the translator always sets one.
+
+## Comparing with Bambu Studio (S4)
+
+`tools/compare_bambu.py BAMBU.gcode.3mf OURS.gcode.3mf` lists what Bambu Studio's export has that ours lacks, or has differently: archive members, `slice_info` metadata and filament attributes, `model_settings`, `plate_1.json`, project-settings keys, the G-code header and thumbnails.
+
+Put Bambu Studio exports in `debug/bambu/` (not committed). They contain Bambu's start G-code.
 
 ## How it works
 
@@ -241,6 +254,7 @@ OrcaSlicer's profiles are AGPL-3.0, so they are read from the installed OrcaSlic
 
 | Version | Changes |
 |---|---|
+| 2026.10.24.8 | b3dt → p3dt chain tested on the Mac (bracket on P2S/H2S/H2D; a shelf with tree supports and without); `examples/s4_bracket.step`, `overhang_shelf.step`, `goals.json`; `slice_info` `first_layer_time` garbage reset; `tools/compare_bambu.py` (S4). |
 | 2026.10.24.7 | From the first full runs on the Mac:
 - the bed check follows `by_first_filament` per layer;
 - `estimates` compares totals including firmware flushes (`;VG1` in `VFLUSH`);

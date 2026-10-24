@@ -1,7 +1,7 @@
 # print3d_translator: planning
 
 Session context. A new chat starts with "Read planning.md and start."
-Status: **complete end to end, 2026.10.24.7, verified on the Mac** (2026-10-24); verifying on the Mac (see "State log").
+Status: **complete end to end, 2026.10.24.8, verified on the Mac; S4 pending Bambu Studio files** (2026-10-24); verifying on the Mac (see "State log").
 
 ## Decisions (2026-10-24)
 
@@ -357,3 +357,12 @@ One study = one plate. JSON, `{name: study}`. Units: mm, °C, %, mm/s.
   - The p3dt MCP server is connected to this Claude session: studies can be run on the Mac directly; `~/p3dt_runs` is shared read-only with the sandbox.
 - 2026-10-24: **2026.10.24.7.** Fixes above. All 7 real slices re-checked: reliable; P2S PLA+PETG: `bed_vs_filaments` warns (PLA on a 70 C bed). 147 tests pass in the sandbox.
   - Next: real STEP parts from b3dt; an overhang part with tree supports; S4 (compare with Bambu Studio's .gcode.3mf).
+- 2026-10-24: **b3dt → p3dt chain (2026.10.24.8).**
+  - The b3dt MCP server runs on the Mac and writes `~/b3d_parts`, now shared with the sandbox.
+  - Built `s4_bracket` (b3dt's example) and `overhang_shelf` (a 20 × 20 × 30 post with a 25 × 20 × 5 shelf at the top). Ran them through p3dt with `{b3dt: {step, volume}}`; all 5 studies are reliable:
+    - bracket P2S/H2S/H2D: 135 layers, ~21.0 g, volume ratio 0.993;
+    - shelf without supports: `overhang` warns with 500 mm² (exact);
+    - shelf with tree supports: 1438 mm³ of support, z 0.2–24.8, max 0.00 mm outside the silhouette (the 5 mm support margin was not needed).
+  - **Found:** OrcaSlicer 2.4.2 writes `slice_info first_layer_time = 3.07e32` on the P2S (uninitialised); the H2S/H2D write 0. `patch_model_id` now resets it, and the soft check `slice_info_values` reports it.
+  - `tools/compare_bambu.py` written for S4. The STEP files are in `examples/`, so the user can slice them in Bambu Studio.
+  - Note: the p3dt MCP server in the Claude app runs the code it started with; restart it after updates. Its output was still the old full form.
