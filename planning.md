@@ -264,6 +264,15 @@ One study = one plate. JSON, `{name: study}`. Units: mm, °C, %, mm/s.
 - 2026-10-24: **Step 1 done.** `profiles.py`, `data/orca_keys.json` (860 keys, 2.4.2), `tools/orca_keys.py`, 50 offline tests plus 12 against the real profiles (H2D/H2S/P2S × 4 nozzles × 4 filaments), all passing.
   - Next: `orca.py` (find the binary, version, run with the assemble list).
   - The Mac spike S1 (OrcaSlicer installed, `--help`, slice a cube) is needed first.
+- 2026-10-24: **S1 on the Mac passed.**
+  - OrcaSlicer 2.4.2 is at `/Applications/OrcaSlicer.app/Contents/MacOS/OrcaSlicer`, with profiles at `Contents/Resources/profiles` (BBL 02.01.00.19).
+  - `--help` lists `--load-assemble-list`.
+  - All 62 tests pass on the Mac, including the real-profile tests.
+- 2026-10-24: The repository moved to `~/Software/print3d_translator`. Its `.venv` must be recreated, because its scripts point at the old path.
+- 2026-10-24: **Step 2 (2026.10.24.2).**
+  - Written: `orca.py`, `mesh.py`, `tools/spike.py`, `tests/test_mesh_orca.py`. 64 offline tests pass in the sandbox.
+  - From the source: with `--outputdir`, the CLI also writes `plate_1.gcode` there. `--export-settings` saves the config when the option is processed. The archive's `project_settings.config` is the settings actually sliced, so it is what the settings check reads.
+  - Next: run `tools/spike.py` on the Mac and read `debug/spike/*/summary.json`, then write gcode.py and gcode3mf.py from what it shows.
 
 ## Open ideas
 
