@@ -1,7 +1,7 @@
 # print3d_translator: planning
 
 Session context. A new chat starts with "Read planning.md and start."
-Status: **complete end to end, 2026.10.24.9, verified on the Mac; S4 done against OrcaSlicer's GUI** (2026-10-24); verifying on the Mac (see "State log").
+Status: **complete end to end, 2026.10.24.10, verified on the Mac; S4 done against OrcaSlicer's GUI** (2026-10-24); verifying on the Mac (see "State log").
 
 ## Decisions (2026-10-24)
 
@@ -386,3 +386,12 @@ One study = one plate. JSON, `{name: study}`. Units: mm, °C, %, mm/s.
   - **pick_1.png:** the object's identify_id is in R (+G, B), A = 255, transparent elsewhere (GUI: 0x5c = 92). The renderer was checked visually against the GUI's top_1/plate_1.
   - **Kept as is:** our 3D/Objects meshes (the GUI omits them; harmless). The GUI's slice_info first_layer_time (457 s) differs from its own header's 313 s; we use the header's.
   - Next: print one of our .gcode.3mf files on a real printer (SD card or Handy) and check the preview, skip-object and the print; a multi-filament GUI export (H2D two filaments) to compare filament_maps and layer_filament_lists; restart the MCP server.
+- 2026-10-24: **2026.10.24.9 on the Mac through MCP (restarted).** The bracket from STEP on the P2S and H2D: reliable, every check passed, ~3.8 s per study, compact output (~3 kB per study).
+  - Final P2S archive vs the GUI's: the same members, apart from our 3D/Objects; model_settings identical; slice_info differs only in prediction and first_layer_time (header value).
+  - H2D: nozzle_volume_type "0 0", printer_model_id O1D, filament_maps 1 (left).
+  - Waiting for a real print: `~/p3dt_runs/run_20261024_213046_957932/bracket_*_print/*.gcode.3mf`.
+- 2026-10-24: **3D view (2026.10.24.10).**
+  - `viewer.py` writes `<name>.view.html`: plain WebGL2 (no three.js, no CDN), with meshes (float32 + uint32) and print-region toolpaths (uint16 polylines at 0.01 mm, layer, feature, tool) zlib + base64, inflated in the browser with DecompressionStream.
+  - Controls: layer slider, only-this-layer, colour by feature or filament, orbit/pan/zoom. The camera frames the parts.
+  - Checked in the preview panel: the shelf with green tree supports, and the bracket with its top surface and walls. 207–289 kB, 0.2 s.
+  - Study key `view`, `p3dt view`, MCP `make_view`. 167 tests pass in the sandbox.

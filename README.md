@@ -54,6 +54,7 @@ p3dt validate examples/studies.json  # static checks, with profiles resolved (no
 p3dt run examples/studies.json       # slice and check; prints the results
 p3dt inputs examples/studies.json NAME   # profiles, placement, OrcaSlicer command, without slicing
 p3dt bench                           # benchmarks on generated parts
+p3dt view STUDY_FOLDER               # write <name>.view.html: parts and toolpaths in 3D
 p3dt status REQUEST | cancel REQUEST
 ```
 
@@ -92,6 +93,7 @@ Settings, read from the environment:
 | `allow_mix_temp` | `true`: allow filaments outside each other's temperature range on one nozzle (one bed temperature for all) |
 | `expect` | `[{quantity: dotted result path, value, tol (relative, default 0.05)}]` |
 | `run` | `{timeout_s}` |
+| `view` | `true`: also write `<name>.view.html`, a 3D view of the plate (see below) |
 
 **Validation.** It refuses what OrcaSlicer would refuse, with the fix:
 - an unknown printer, nozzle, filament or process;
@@ -194,6 +196,17 @@ A benchmark passes when the result is reliable and its expected values hold.
 - **An auto brim is at most 10 mm wide, and supports stay within 5 mm of the silhouette** (`footprint`).
 - **Every filament needs a colour.** Without one, the 2.4.2 CLI crashes on 2+ filaments, so the translator always sets one.
 
+## The 3D view
+
+`"view": true` in a study, `p3dt view STUDY_FOLDER`, or the MCP tool `make_view` writes `<name>.view.html` next to the result. It shows:
+- the placed parts on the bed;
+- the toolpaths that our own G-code reader found, coloured by feature (outer and inner walls, infill, top and bottom surfaces, bridges, supports, brim, prime tower) or by filament;
+- a layer slider, with an option to show only the current layer.
+
+To move around: drag to rotate, shift-drag to pan, scroll to zoom.
+
+It is one HTML file with no libraries and nothing loaded from the internet: plain WebGL2, with the meshes and toolpaths embedded as zlib-compressed binary that the browser inflates. It runs in Safari 16.4+, Chrome or Firefox and is about 200–300 kB for a small plate.
+
 ## Comparing with a GUI export (S4)
 
 `tools/compare_bambu.py BAMBU.gcode.3mf OURS.gcode.3mf` lists what Bambu Studio's export has that ours lacks, or has differently: archive members, `slice_info` metadata and filament attributes, `model_settings`, `plate_1.json`, project-settings keys, the G-code header and thumbnails.
@@ -226,6 +239,7 @@ Put GUI exports (OrcaSlicer or Bambu Studio, "Export plate sliced file") in `deb
 | `orca.py` | Find OrcaSlicer and its version. Build the command (assemble list, bed type, filament map, `--allow-mix-temp`). Run it in its own process group with a timeout and a cancel file. Decode the exit codes. |
 | `gcode.py` | Read the G-code: segments with region, tool, feature, object and layer; temperatures; tool changes; header and footer. |
 | `gcode3mf.py` | Read and check the archive; compare the settings round trip; `finalize()` writes what OrcaSlicer's GUI export has and the CLI lacks. |
+| `viewer.py` | The self-contained 3D view (`<name>.view.html`). |
 | `thumbs.py` | The plate pictures (isometric preview, top view, skip-object pick image), rendered from the placed meshes. |
 | `check.py` | The checks on the slice. |
 | `format.py` | `study_format` and validation, including OrcaSlicer's filament-compatibility rule. |
@@ -239,7 +253,7 @@ Put GUI exports (OrcaSlicer or Bambu Studio, "Export plate sliced file") in `deb
 - `run_studies` (returns within `wait_s` ≤ 50 s) and `study_status`;
 - `get_inputs` (profiles, placement and command without slicing);
 - `run_benchmarks`, `bench_status`;
-- `get_file`, `cancel`.
+- `get_file`, `make_view`, `cancel`.
 
 The instructions tell the model to:
 - check `reliable` before using a result;
@@ -272,6 +286,7 @@ OrcaSlicer's profiles are AGPL-3.0, so they are read from the installed OrcaSlic
 
 | Version | Changes |
 |---|---|
+| 2026.10.24.10 | 3D view (`viewer.py`): study key `view`, `p3dt view`, MCP tool `make_view`. |
 | 2026.10.24.9 | S4 against OrcaSlicer's GUI exports. The G-code is equivalent. `gcode3mf.finalize()` and `thumbs.py` make the archive match the GUI's: plate pictures with the skip-object pick image, `model_settings` entries, per-extruder `nozzle_volume_type`, `first_layer_time` from the header. Soft check `thumbnails`; the plate name matches the GUI (""). |
 | 2026.10.24.8 | b3dt → p3dt chain tested on the Mac (bracket on P2S/H2S/H2D; a shelf with tree supports and without); `examples/s4_bracket.step`, `overhang_shelf.step`, `goals.json`; `slice_info` `first_layer_time` garbage reset; `tools/compare_bambu.py` (S4). |
 | 2026.10.24.7 | From the first full runs on the Mac:

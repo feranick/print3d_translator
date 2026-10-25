@@ -1,5 +1,5 @@
 """api.py — what the CLI and the MCP server call. JSON in, JSON out.
-Version: 2026.10.24.7
+Version: 2026.10.24.10
 
     tool_status()                 versions; OrcaSlicer and its profiles found or not; build123d
     study_format()                the study format (with tool_status), for the caller to read
@@ -10,6 +10,7 @@ Version: 2026.10.24.7
     cancel(request, names)        stops studies (a 'cancel' file that the running OrcaSlicer watches)
     inputs(study, name)           the flattened profiles, placement and OrcaSlicer command, without slicing
     bench(names, wait)            benchmark studies with known answers; bench_status(bench, wait)
+    view(study)                   a self-contained 3D view (<name>.view.html) of a finished study
     read_file(path)               a written file as base64 (only under P3DT_OUT)
 
 Local only: studies run in a background process (P3DT_WORKERS at once, default 2) that writes each
@@ -241,6 +242,23 @@ def inputs(study: dict, name: str = "study", base_dir: str | None = None) -> dic
     return {"ok": True, "folder": str(d), "profiles": {**r["names"], "set": r["set"], "files": ctx["files"]},
             "objects": ctx["objects"], "tower": ctx["tower"], "filament_map": ctx["fmap"],
             "command": ctx["argv"], "assemble_list": str(d / "assemble.json"), "warnings": ctx["warnings"]}
+
+
+def view(study: str) -> dict:
+    """Writes <study>/<name>.view.html for a finished study (its folder, or its <name>.json): the parts on the
+    bed and the toolpaths, self-contained. Returns {view: path, bytes} or {error}."""
+    from . import viewer
+    p = Path(study).expanduser()
+    if p.suffix == ".json":
+        p = p.parent
+    if not (p / f"{p.name}.json").exists():
+        return {"error": f"no study result at {p} (give a study folder from a run's 'result' path)"}
+    try:
+        out = viewer.for_study(p)
+    except ValueError as e:
+        return {"error": str(e)}
+    return {"view": out, "bytes": Path(out).stat().st_size,
+            "open": "open it in a browser (Safari, Chrome, Firefox); no internet needed"}
 
 
 def read_file(path: str, max_mb: float = 20) -> dict:

@@ -1,6 +1,6 @@
 """mcp_server.py — MCP server (stdio): lets LLM-based tools turn parts into checked Bambu Lab print files
 with OrcaSlicer. It never talks to a printer.
-Version: 2026.10.24.7
+Version: 2026.10.24.10
 
 Tools (all JSON):
   study_format      the study format: printer, filaments, objects, intent, overrides. Read it first.
@@ -10,6 +10,7 @@ Tools (all JSON):
   get_inputs        the flattened profiles, placement and OrcaSlicer command of one study, without slicing
   run_benchmarks    benchmark studies with known answers; bench_status collects them
   get_file          a written file as base64 (e.g. the .gcode.3mf)
+  make_view         a self-contained 3D view (.view.html) of a finished study
   cancel            stops a request's studies
 
 Run:  p3dt-mcp          (stdio; local only)
@@ -35,7 +36,7 @@ Before using a result check 'reliable' (false: do not print it; 'unreliable_beca
 The file to print is files.gcode_3mf: the user prints it from the printer's SD card, Bambu Studio or Handy.
 Hints: orient 'flat' puts the largest flat face down; 'at' [x, y] fixes a part's centre; H2D filaments take
 extruder 'left'/'right'; filaments at different temperatures on one nozzle need allow_mix_temp: true;
-give each filament a color (flush volumes depend on it).
+give each filament a color (flush volumes depend on it); "view": true (or make_view) writes a 3D view to open in a browser.
 Polling costs tokens: when a run needs more than about 5 minutes, tell the user when it should finish and stop.
 Units: mm, degrees C, %, mm/s, g, s."""
 
@@ -99,6 +100,14 @@ def bench_status(bench: str, wait_s: float = 30) -> dict:
 def get_file(path: str, max_mb: float = 20) -> dict:
     """A file written by run_studies (a path from its result, e.g. files.gcode_3mf) as base64."""
     return api.read_file(path, max_mb)
+
+
+@server.tool()
+def make_view(study: str) -> dict:
+    """Writes a self-contained 3D view (<name>.view.html) of a finished study: the parts on the bed and the
+    toolpaths, layer slider, colours by feature or filament. 'study' is the study folder or its result path
+    (a study's 'result'). Returns the file's path: tell the user to open it in a browser."""
+    return api.view(study)
 
 
 @server.tool()

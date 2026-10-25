@@ -1,7 +1,7 @@
 """runner.py — one study end to end: validate, resolve profiles, load / orient / check / place the parts,
 write the flattened profiles, STLs and assemble list, run OrcaSlicer, fill in the archive's printer id,
 check everything independently, and write <name>.json (atomically).
-Version: 2026.10.24.9
+Version: 2026.10.24.10
 
 Study folder <name>/:
   profiles/          machine.json, process.json, filament_<i>.json (flattened copies; never the installed ones)
@@ -34,6 +34,7 @@ from . import mesh as M
 from . import orca
 from . import placement as PL
 from . import thumbs
+from . import viewer
 from . import profiles as P
 
 DEFAULT_TIMEOUT = 600.0
@@ -303,6 +304,11 @@ def run_study(name: str, study: dict, folder: str | Path, base_dir=None) -> dict
         res["ok"] = True
         res["reliable"] = reliable and all(e["pass"] for e in res["expect"])
         res["unreliable_because"] = because
+        if study.get("view"):
+            try:
+                res["files"]["view"] = viewer.for_study(folder, res)
+            except Exception as e:                       # the view is a convenience: never fail a print on it
+                res["warnings"].append(f"view not written: {type(e).__name__}: {e}")
     except (P.ProfileError, Gm.GeometryError, PL.PlacementError, ValueError) as e:
         res["why"] = str(e)
         res["errors"] = [str(e)]

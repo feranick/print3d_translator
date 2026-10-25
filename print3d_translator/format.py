@@ -1,5 +1,5 @@
 """format.py — the study format (study_format) and static validation (validate): no slicing.
-Version: 2026.10.24.6
+Version: 2026.10.24.10
 
 A study is one plate: a Bambu Lab printer, its filaments, the objects on the plate and the intent.
 Validation checks keys, types, files and (when OrcaSlicer's profiles are found) resolves the
@@ -14,7 +14,7 @@ from pathlib import Path
 from . import profiles as P
 
 STUDY_KEYS = {"printer", "filaments", "objects", "intent", "overrides", "allow_mix_temp", "expect", "run",
-              "description"}
+              "description", "view"}
 OBJECT_KEYS = {"name", "part", "filament", "orient", "copies", "at"}
 PART_FORMS = ("step", "stl", "3mf", "goal", "b3dt")
 NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$")
@@ -65,7 +65,8 @@ def study_format(status: dict | None = None) -> dict:
             "allow_mix_temp": "true: allow filaments with different temperatures on one nozzle (one bed temperature)",
             "expect": "[{quantity: dotted result path (estimate.filament_g, estimate.time_s, gcode.layers, "
                       "objects.<name>.volume_mm3), value, tol (relative, default 0.05)}]",
-            "run": "{timeout_s}: OrcaSlicer's time limit for this study (default P3DT_TIMEOUT, 600)"},
+            "run": "{timeout_s}: OrcaSlicer's time limit for this study (default P3DT_TIMEOUT, 600)",
+            "view": "true: also write <name>.view.html, a self-contained 3D view (parts, toolpaths, layer slider)"},
         "results": {
             "reliable": "false when a hard check failed (unreliable_because says which)",
             "files": "gcode_3mf (the file to print), gcode, profiles (the flattened settings), log",
@@ -196,6 +197,8 @@ def validate_study(st, base_dir: str | Path | None = None, vendor: P.Vendor | No
             errors.append("run.timeout_s: seconds > 0")
         elif cap and run["timeout_s"] > float(cap):
             errors.append(f"run.timeout_s {run['timeout_s']} is above this machine's cap P3DT_MAX_TIMEOUT={cap}")
+    if "view" in st and not isinstance(st["view"], bool):
+        errors.append("view: true or false")
     if "allow_mix_temp" in st and not isinstance(st["allow_mix_temp"], bool):
         errors.append("allow_mix_temp: true or false")
 

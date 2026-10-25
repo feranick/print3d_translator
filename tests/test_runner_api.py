@@ -1,6 +1,6 @@
 """End-to-end tests of format.py, runner.py, api.py, cli.py and mcp_server.py with a fake OrcaSlicer
 (tests/fake_orca.py) and the hand-written profile tree; and one real run when OrcaSlicer is installed.
-Version: 2026.10.24.9
+Version: 2026.10.24.10
 """
 import json
 import os
@@ -201,7 +201,7 @@ def test_mcp_tools(fake):
     from print3d_translator import mcp_server as S
     names = {t.name for t in asyncio.run(S.server.list_tools())}
     assert names == {"study_format", "validate_studies", "run_studies", "study_status", "get_inputs",
-                     "run_benchmarks", "bench_status", "get_file", "cancel"}
+                     "run_benchmarks", "bench_status", "get_file", "make_view", "cancel"}
     assert len(S.INSTRUCTIONS.splitlines()) <= 30
 
 
@@ -229,3 +229,15 @@ def test_summaries_are_small(fake):
     one = s["studies"]["one"]
     assert one["reliable"] and one["result"].endswith("one/one.json") and "settings_roundtrip" in one["checks_passed"]
     assert not one.get("checks_failed")
+
+
+def test_view_written_by_study_and_by_api(fake):
+    res = R.run_study("v", p2s(fake, view=True), fake / "v")
+    assert res["reliable"] and Path(res["files"]["view"]).name == "v.view.html"
+    html = Path(res["files"]["view"]).read_text()
+    assert "v.view.html" not in html and '"title": "v"' in html
+    Path(res["files"]["view"]).unlink()
+    out = api.view(str(fake / "v" / "v.json"))
+    assert Path(out["view"]).exists() and out["bytes"] > 1000
+    assert "error" in api.view(str(fake / "nope"))
+    assert not api.validate({"x": p2s(fake, view="yes")})["x"]["ok"]

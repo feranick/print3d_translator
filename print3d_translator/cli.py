@@ -1,5 +1,5 @@
 """cli.py — the command line. Every command prints JSON; '-' reads the studies from stdin.
-Version: 2026.10.24.7
+Version: 2026.10.24.10
 
     p3dt status                         versions; OrcaSlicer and its profiles found or not
     p3dt format                         the study format
@@ -10,6 +10,7 @@ Version: 2026.10.24.7
     p3dt bench [NAMES...]               the benchmarks (generated parts, known answers)
     p3dt bench-status BENCH             a bench request
     p3dt cancel REQUEST [NAMES...]      stop studies
+    p3dt view STUDY_FOLDER              write <name>.view.html: the parts and toolpaths in 3D (open in a browser)
     p3dt run-request FOLDER             (internal) the background worker of a request
 
 Relative part paths are relative to the studies file's folder. Nothing is ever sent to a printer.
@@ -61,6 +62,8 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("cancel")
     s.add_argument("request")
     s.add_argument("names", nargs="*")
+    s = sub.add_parser("view")
+    s.add_argument("study")
     s = sub.add_parser("run-request")
     s.add_argument("folder")
     a = ap.parse_args(argv)
@@ -97,6 +100,10 @@ def main(argv: list[str] | None = None) -> int:
         _print(api.bench_status(a.bench, a.wait))
     elif a.cmd == "cancel":
         _print(api.cancel(a.request, a.names or None))
+    elif a.cmd == "view":
+        out = api.view(a.study)
+        _print(out)
+        return 1 if "error" in out else 0
     elif a.cmd == "run-request":
         api.run_request(a.folder)
     return 0
