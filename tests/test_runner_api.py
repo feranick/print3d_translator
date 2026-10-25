@@ -1,6 +1,6 @@
 """End-to-end tests of format.py, runner.py, api.py, cli.py and mcp_server.py with a fake OrcaSlicer
 (tests/fake_orca.py) and the hand-written profile tree; and one real run when OrcaSlicer is installed.
-Version: 2026.10.24.7
+Version: 2026.10.24.9
 """
 import json
 import os
@@ -95,7 +95,7 @@ def test_run_study_reliable_with_files(fake):
                                 expect=[{"quantity": "objects.cube.volume_mm3", "value": 4000}]), fake / "s")
     assert res["ok"] and res["reliable"], res.get("unreliable_because")
     assert Path(res["files"]["gcode_3mf"]).name == "s.gcode.3mf" and Path(res["files"]["gcode"]).exists()
-    assert res["checks"]["printer_model_id"]["passed"] and res["slice_info"]["printer_model_id_patched"]
+    assert res["checks"]["printer_model_id"]["passed"] and "slice_info.config" in res["slice_info"]["finalized"] and "thumbnails" in res["slice_info"]["finalized"]
     assert res["checks"]["settings_roundtrip"]["passed"] and res["expect"][0]["pass"]
     assert len(res["objects"]["cube"]["centers"]) == 2 and res["estimate"]["time_s"] == 750
     assert "OrcaSlicer: fake_warning" in res["warnings"]

@@ -1,7 +1,7 @@
 """gcode.py — an independent, streaming reader of OrcaSlicer / Bambu Lab G-code. It does not trust the
 slicer's summary: it follows every move and returns the extrusion segments, layers, tools, objects,
 features and temperatures, which check.py compares with the study.
-Version: 2026.10.24.7
+Version: 2026.10.24.9
 
 What it understands:
 - G0/G1 and arcs G2/G3 (I/J centre offsets, Z helix, P full turns), G90/G91, M82/M83, G92, G28.
@@ -350,6 +350,8 @@ def _header_line(h: dict, s: str) -> None:
                 h["model_time_s"] = hms_to_s(v)
             elif k == "total estimated time":
                 h["total_time_s"] = hms_to_s(v)
+    elif s.startswith("estimated first layer printing time") and "=" in s:
+        h["first_layer_time_s"] = hms_to_s(s.split("=", 1)[1])
     elif s.startswith("total layer number:"):
         h["layers"] = int(float(s.split(":", 1)[1]))
     elif s.startswith("max_z_height:"):

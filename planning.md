@@ -1,7 +1,7 @@
 # print3d_translator: planning
 
 Session context. A new chat starts with "Read planning.md and start."
-Status: **complete end to end, 2026.10.24.8, verified on the Mac; S4 pending Bambu Studio files** (2026-10-24); verifying on the Mac (see "State log").
+Status: **complete end to end, 2026.10.24.9, verified on the Mac; S4 done against OrcaSlicer's GUI** (2026-10-24); verifying on the Mac (see "State log").
 
 ## Decisions (2026-10-24)
 
@@ -366,3 +366,23 @@ One study = one plate. JSON, `{name: study}`. Units: mm, °C, %, mm/s.
   - **Found:** OrcaSlicer 2.4.2 writes `slice_info first_layer_time = 3.07e32` on the P2S (uninitialised); the H2S/H2D write 0. `patch_model_id` now resets it, and the soft check `slice_info_values` reports it.
   - `tools/compare_bambu.py` written for S4. The STEP files are in `examples/`, so the user can slice them in Bambu Studio.
   - Note: the p3dt MCP server in the Claude app runs the code it started with; restart it after updates. Its output was still the old full form.
+- 2026-10-24: **S4 against OrcaSlicer 2.4.2's GUI (2026.10.24.9).**
+  - The user sliced `examples/s4_bracket.step` in OrcaSlicer's GUI ("Export plate sliced file", in `debug/bambu/`):
+    - P2S 0.4 PLA Basic 0.20 Standard (47m08s);
+    - H2D 0.4 (43m19s; two filament slots, the filament on the right nozzle);
+    - H2S, but with a 0.2 nozzle, 0.10 process and PLA Marble (2h35m): wrong settings, still useful for the layout.
+  - The GUI fills `printer_model_id` itself (N7, O1D, O1S), which confirms the patch.
+  - **The G-code is equivalent to ours** (P2S):
+    - same bbox to 0.1 mm;
+    - extruded volume per feature within 1 mm³ (16636 vs 16637);
+    - project settings equal apart from list padding (11 keys);
+    - 17% more G1 lines in ours, because our STL is tessellated more finely (0.01 mm) than the GUI's.
+  - **Archive differences, all fixed by `gcode3mf.finalize()`:**
+    - thumbnails (plate_1, plate_1_small, plate_no_light_1, top_1, pick_1; 512² RGBA, small 128²);
+    - model_settings plate refs and filament_maps;
+    - H2D `nozzle_volume_type` "0" → "0 0";
+    - `first_layer_time` from the header;
+    - plate name "".
+  - **pick_1.png:** the object's identify_id is in R (+G, B), A = 255, transparent elsewhere (GUI: 0x5c = 92). The renderer was checked visually against the GUI's top_1/plate_1.
+  - **Kept as is:** our 3D/Objects meshes (the GUI omits them; harmless). The GUI's slice_info first_layer_time (457 s) differs from its own header's 313 s; we use the header's.
+  - Next: print one of our .gcode.3mf files on a real printer (SD card or Handy) and check the preview, skip-object and the print; a multi-filament GUI export (H2D two filaments) to compare filament_maps and layer_filament_lists; restart the MCP server.

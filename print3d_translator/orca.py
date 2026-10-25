@@ -1,6 +1,6 @@
 """orca.py — the OrcaSlicer command line: find it, tell its version, build the command, run it in its
 own process group with a timeout and a cancel flag, and decode its exit status.
-Version: 2026.10.24.2
+Version: 2026.10.24.9
 
 The translator never asks OrcaSlicer to do anything but slice files: no printer, network or cloud
 options are ever passed. Geometry comes in through an assemble list (--load-assemble-list): one STL
@@ -119,7 +119,7 @@ def decode(returncode: int) -> dict:
     return {"code": code, "name": EXIT_CODES.get(code, f"UNKNOWN_{code}"), "fix": EXIT_FIXES.get(code)}
 
 
-def assemble_list(objects: list[dict], plate_name: str = "plate1") -> dict:
+def assemble_list(objects: list[dict], plate_name: str = "") -> dict:
     """The --load-assemble-list JSON for one plate. objects: [{path (STL in bed coordinates),
     filament (1-based)}]. Positions are 0 (the STL is already placed) and the plate is not arranged."""
     return {"plates": [{"plate_name": plate_name, "need_arrange": False,

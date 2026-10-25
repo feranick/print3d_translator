@@ -141,7 +141,8 @@ Settings, read from the environment:
 | `archive_layout` | the `.gcode.3mf` holds `Metadata/plate_1.gcode`, its md5, `slice_info.config`, `model_settings.config`, `project_settings.config` | hard |
 | `md5` | `plate_1.gcode.md5` = upper-case hex MD5 of the G-code; the plain `.gcode` is the same file | hard |
 | `printer_model_id` | `slice_info.config` names the printer (H2D `O1D`, H2S `O1S`, P2S `N7`); OrcaSlicer 2.4.2 leaves it empty, so it is filled in | hard |
-| `slice_info_values` | `first_layer_time` is sane. On the P2S, OrcaSlicer 2.4.2 writes an uninitialised 3.07e32, which is reset to 0. | soft |
+| `slice_info_values` | `first_layer_time` is sane. On the P2S, OrcaSlicer 2.4.2 writes an uninitialised 3.07e32; it is set from the G-code header's first-layer estimate. | soft |
+| `thumbnails` | the plate pictures are present, as OrcaSlicer's GUI writes them (rendered by `thumbs.py`) | soft |
 | `nozzle_diameters`, `filament_map` | `slice_info` has the study's nozzle and filament → extruder map | hard |
 | `settings_roundtrip` | every setting OrcaSlicer knows that we wrote equals what it sliced with (`project_settings.config`). Catches the CLI's silent fallback to defaults. | hard |
 | `objects_present` | every placed object is printed, and nothing else | hard |
@@ -193,11 +194,27 @@ A benchmark passes when the result is reliable and its expected values hold.
 - **An auto brim is at most 10 mm wide, and supports stay within 5 mm of the silhouette** (`footprint`).
 - **Every filament needs a colour.** Without one, the 2.4.2 CLI crashes on 2+ filaments, so the translator always sets one.
 
-## Comparing with Bambu Studio (S4)
+## Comparing with a GUI export (S4)
 
 `tools/compare_bambu.py BAMBU.gcode.3mf OURS.gcode.3mf` lists what Bambu Studio's export has that ours lacks, or has differently: archive members, `slice_info` metadata and filament attributes, `model_settings`, `plate_1.json`, project-settings keys, the G-code header and thumbnails.
 
-Put Bambu Studio exports in `debug/bambu/` (not committed). They contain Bambu's start G-code.
+Put GUI exports (OrcaSlicer or Bambu Studio, "Export plate sliced file") in `debug/bambu/` (not committed). They contain Bambu's start G-code.
+
+**Result** (2026-10-24, the bracket sliced by OrcaSlicer 2.4.2's GUI vs our CLI run, P2S and H2D):
+- **The G-code is equivalent:** same placement, same 135 layers, the same extruded volume per feature to 1 mm³, and settings identical apart from list padding. Ours has more, shorter moves, because our STL is tessellated more finely.
+- **The archives differed only in packaging.** `gcode3mf.finalize()` now writes what the GUI writes:
+  - `printer_model_id`;
+  - `first_layer_time` (from the G-code header);
+  - `nozzle_volume_type` with one value per extruder (H2D `"0 0"`);
+  - the `model_settings` plate entries (`filament_maps`, `thumbnail_file`, `thumbnail_no_light_file`, `top_file`, `pick_file`, `pattern_bbox_file`);
+  - the five plate pictures.
+- **The pictures** (`thumbs.py`, numpy z-buffer):
+  - `top_1.png` matches the GUI's layout pixel for pixel;
+  - `plate_1.png` is an isometric close-up, as in the GUI;
+  - `pick_1.png` encodes each object's `identify_id` for the printer's skip-object.
+- **What still differs:**
+  - our archive keeps the meshes (`3D/Objects/*.model`), which is harmless;
+  - the GUI's `slice_info first_layer_time` (457 s) counts more than the header's first layer (313 s), so ours uses the header's.
 
 ## How it works
 
@@ -208,7 +225,8 @@ Put Bambu Studio exports in `debug/bambu/` (not committed). They contain Bambu's
 | `placement.py` | Place the parts and the prime tower on a 1 mm grid. Each part stays inside the area its extruder prints and outside the wrapping zone, with a halo for brim and gap. Fixed `at` positions are kept, the largest part goes nearest the centre, and the tower goes in a back corner. |
 | `orca.py` | Find OrcaSlicer and its version. Build the command (assemble list, bed type, filament map, `--allow-mix-temp`). Run it in its own process group with a timeout and a cancel file. Decode the exit codes. |
 | `gcode.py` | Read the G-code: segments with region, tool, feature, object and layer; temperatures; tool changes; header and footer. |
-| `gcode3mf.py` | Read and check the archive; compare the settings round trip; fill in `printer_model_id`. |
+| `gcode3mf.py` | Read and check the archive; compare the settings round trip; `finalize()` writes what OrcaSlicer's GUI export has and the CLI lacks. |
+| `thumbs.py` | The plate pictures (isometric preview, top view, skip-object pick image), rendered from the placed meshes. |
 | `check.py` | The checks on the slice. |
 | `format.py` | `study_format` and validation, including OrcaSlicer's filament-compatibility rule. |
 | `runner.py` | One study end to end, into its folder; the result is written atomically. |
@@ -254,6 +272,7 @@ OrcaSlicer's profiles are AGPL-3.0, so they are read from the installed OrcaSlic
 
 | Version | Changes |
 |---|---|
+| 2026.10.24.9 | S4 against OrcaSlicer's GUI exports. The G-code is equivalent. `gcode3mf.finalize()` and `thumbs.py` make the archive match the GUI's: plate pictures with the skip-object pick image, `model_settings` entries, per-extruder `nozzle_volume_type`, `first_layer_time` from the header. Soft check `thumbnails`; the plate name matches the GUI (""). |
 | 2026.10.24.8 | b3dt → p3dt chain tested on the Mac (bracket on P2S/H2S/H2D; a shelf with tree supports and without); `examples/s4_bracket.step`, `overhang_shelf.step`, `goals.json`; `slice_info` `first_layer_time` garbage reset; `tools/compare_bambu.py` (S4). |
 | 2026.10.24.7 | From the first full runs on the Mac:
 - the bed check follows `by_first_filament` per layer;

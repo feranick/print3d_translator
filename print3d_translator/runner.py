@@ -1,7 +1,7 @@
 """runner.py — one study end to end: validate, resolve profiles, load / orient / check / place the parts,
 write the flattened profiles, STLs and assemble list, run OrcaSlicer, fill in the archive's printer id,
 check everything independently, and write <name>.json (atomically).
-Version: 2026.10.24.6
+Version: 2026.10.24.9
 
 Study folder <name>/:
   profiles/          machine.json, process.json, filament_<i>.json (flattened copies; never the installed ones)
@@ -33,6 +33,7 @@ from . import geometry as Gm
 from . import mesh as M
 from . import orca
 from . import placement as PL
+from . import thumbs
 from . import profiles as P
 
 DEFAULT_TIMEOUT = 600.0
@@ -246,7 +247,20 @@ def run_study(name: str, study: dict, folder: str | Path, base_dir=None) -> dict
             res["errors"] = [res["why"]]
             return res
         model_id = r["model"]["model_id"]
-        patched = A.patch_model_id(arch, model_id) if model_id else False
+        a0 = A.read(arch)
+        ids = {o.get("name"): o.get("identify_id") for o in
+               ((a0.get("slice_info") or {}).get("plates") or [{}])[0].get("objects", [])}
+        head = G.parse("\n".join((a0["gcode"] or b"").decode("utf-8", "replace").splitlines()[:40])).header
+        images = None
+        try:
+            colors = [C._first(f.get("filament_colour"), "#808080") for f in r["filaments"]]
+            images = thumbs.render([{"tri": p["tri"], "color": colors[p["filament"] - 1],
+                                     "identify_id": int(ids.get(p["name"]) or 0)} for p in ctx["placed"]],
+                                   C._poly(r["machine"].get("printable_area")))
+        except Exception as e:                           # pictures are cosmetic: never fail a print on them
+            res["warnings"].append(f"thumbnails not rendered: {type(e).__name__}: {e}")
+        fin = A.finalize(arch, model_id, r["model"]["extruders"], head.get("first_layer_time_s"), images)
+        patched = fin["changed"]
         a = A.read(arch)
         checks = A.check_archive(a, plain.read_bytes() if plain.exists() else None, model_id, r["model"]["nozzle"],
                                  len(r["filaments"]), ctx["fmap"])
@@ -274,7 +288,7 @@ def run_study(name: str, study: dict, folder: str | Path, base_dir=None) -> dict
         res["gcode"] = gc["gcode"]
         res["slice_info"] = {"prediction_s": _f(si.get("metadata", {}).get("prediction"), 0) or None,
                              "weight_g": _f(si.get("metadata", {}).get("weight"), 0) or None,
-                             "filaments": si.get("filaments"), "printer_model_id_patched": patched}
+                             "filaments": si.get("filaments"), "finalized": patched}
         out3mf = folder / f"{name}.gcode.3mf"
         shutil.copyfile(arch, out3mf)
         res["files"]["gcode_3mf"] = str(out3mf)

@@ -1,6 +1,6 @@
 """gcode3mf.py — the Bambu .gcode.3mf archive: read it, check its structure, compare the settings it
 was sliced with against ours, and fill in what OrcaSlicer's CLI leaves out.
-Version: 2026.10.24.8
+Version: 2026.10.24.9
 
 Layout written by OrcaSlicer 2.4.2 (--export-3mf after --slice), as seen on the P2S and H2D:
   [Content_Types].xml, _rels/.rels, 3D/3dmodel.model (+ 3D/Objects/*.model without --min-save),
@@ -100,6 +100,9 @@ def check_archive(a: dict, plain_gcode: bytes | None, model_id: str | None, nozz
     missing = [n for n in REQUIRED if n not in a["names"]]
     if a["gcode"] is None:
         missing.append("Metadata/plate_1.gcode")
+    thumbs_missing = [n for n in THUMBS.values() if n not in a["names"]]
+    c["thumbnails"] = {"passed": not thumbs_missing, "hard": False, "missing": thumbs_missing,
+                       "why": "plate pictures as OrcaSlicer's GUI writes them (preview and skip-object on the printer)"}
     c["archive_layout"] = {"passed": not missing, "got": sorted(a["names"]), "missing": missing,
                            "why": "the printer reads Metadata/plate_<n>.gcode with its md5 and slice_info.config"}
     if a["gcode"] is not None:
@@ -221,29 +224,114 @@ def roundtrip(machine: dict, process: dict, filaments: list[dict], project: dict
 
 # ---------------------------------------------------------------- patching
 
-def patch_model_id(path: str | Path, model_id: str, plate: int = 1) -> bool:
-    """Fixes slice_info.config in place: writes printer_model_id (OrcaSlicer 2.4.2 leaves it empty), and
-    resets first_layer_time to 0 when OrcaSlicer wrote garbage (seen on the P2S: 3.07e32, an uninitialised
-    value). The G-code and its md5 are not touched. Returns True if the archive was rewritten."""
+THUMBS = {"plate": "Metadata/plate_1.png", "plate_small": "Metadata/plate_1_small.png",
+          "no_light": "Metadata/plate_no_light_1.png", "top": "Metadata/top_1.png", "pick": "Metadata/pick_1.png"}
+_MS_REFS = (("thumbnail_file", "plate"), ("thumbnail_no_light_file", "no_light"), ("top_file", "top"),
+            ("pick_file", "pick"))
+
+
+def _set_meta(xml: str, key: str, value: str) -> str:
+    """Sets <metadata key=".." value=".."/> in slice_info's first plate (added after 'index' if missing)."""
+    pat = rf'(<metadata key="{re.escape(key)}" value=")[^"]*(")'
+    if re.search(pat, xml):
+        return re.sub(pat, lambda m: f"{m.group(1)}{value}{m.group(2)}", xml, count=1)
+    return re.sub(r'(\n(\s*)<metadata key="index" value="[^"]*"/>)',
+                  lambda m: f'{m.group(1)}\n{m.group(2)}<metadata key="{key}" value="{value}"/>', xml, count=1)
+
+
+def finalize(path: str | Path, model_id: str | None, extruders: int = 1, first_layer_s: float | None = None,
+             images: dict | None = None) -> dict:
+    """Makes the CLI's archive match what OrcaSlicer's GUI exports ('Export plate sliced file', compared in
+    spike S4 on the P2S and H2D), without touching the G-code or its md5:
+      slice_info:     printer_model_id (the CLI leaves it empty); first_layer_time from the G-code header
+                      (the CLI writes 0, or garbage such as 3.07e32 on the P2S); nozzle_volume_type with one
+                      value per extruder (the CLI writes one value on the H2D, the GUI '0 0')
+      model_settings: the plate's filament_maps, thumbnail_file, thumbnail_no_light_file, top_file,
+                      pick_file and pattern_bbox_file entries
+      plate_1.json:   first_layer_time
+      the pictures:   plate_1.png, plate_1_small.png, plate_no_light_1.png, top_1.png, pick_1.png (thumbs.py)
+    Returns {changed: [...]}. Rewrites the zip once."""
     path = Path(path)
     with zipfile.ZipFile(path) as z:
-        data = z.read("Metadata/slice_info.config").decode("utf-8")
-    new = re.sub(r'(<metadata key="printer_model_id" value=")[^"]*(")', rf'\g<1>{model_id}\g<2>', data, count=1)
-
-    def fix_flt(m):
+        items = [(i, z.read(i.filename)) for i in z.infolist()]
+    files = {i.filename: b for i, b in items}
+    changed = []
+    si = files.get("Metadata/slice_info.config", b"").decode("utf-8")
+    si0 = si
+    if model_id:
+        si = _set_meta(si, "printer_model_id", model_id)
+    flt = None
+    m = re.search(r'<metadata key="first_layer_time" value="([^"]*)"', si)
+    try:
+        cur = float(m.group(1)) if m else 0.0
+    except ValueError:
+        cur = float("nan")
+    if first_layer_s is not None and first_layer_s >= 0:
+        flt = float(first_layer_s)
+    elif not (0 <= cur < FIRST_LAYER_TIME_MAX):
+        flt = 0.0
+    if flt is not None:
+        si = _set_meta(si, "first_layer_time", f"{flt:.6f}")
+    m = re.search(r'<metadata key="nozzle_volume_type" value="([^"]*)"', si)
+    if m and extruders > 1:
+        vals = m.group(1).split()
+        if 0 < len(vals) < extruders:
+            si = _set_meta(si, "nozzle_volume_type", " ".join(vals + [vals[-1]] * (extruders - len(vals))))
+    if si != si0:
+        files["Metadata/slice_info.config"] = si.encode("utf-8")
+        changed.append("slice_info.config")
+    fm = re.search(r'<metadata key="filament_maps" value="([^"]*)"', si)
+    ms = files.get("Metadata/model_settings.config", b"").decode("utf-8")
+    if ms and "<plate>" in ms:
+        ms0 = ms
+        want = []
+        if fm and 'key="filament_maps"' not in ms.split("<plate>", 1)[1]:
+            want.append(("filament_maps", fm.group(1)))
+        if images:
+            for key, img in _MS_REFS:
+                if f'key="{key}"' not in ms:
+                    want.append((key, THUMBS[img]))
+        if "Metadata/plate_1.json" in files and 'key="pattern_bbox_file"' not in ms:
+            want.append(("pattern_bbox_file", "Metadata/plate_1.json"))
+        if want:
+            plate_open = ms.index("<plate>") + len("<plate>")
+            gm = re.search(r'\n([ \t]*)<metadata key="gcode_file"[^\n]*', ms[plate_open:])
+            if gm:
+                at, indent = plate_open + gm.end(), gm.group(1)
+            else:
+                at, indent = plate_open, "    "
+            ms = ms[:at] + "".join(f'\n{indent}<metadata key="{k}" value="{v}"/>' for k, v in want) + ms[at:]
+        if ms != ms0:
+            files["Metadata/model_settings.config"] = ms.encode("utf-8")
+            changed.append("model_settings.config")
+    if flt is not None and "Metadata/plate_1.json" in files:
         try:
-            v = float(m.group(2))
+            pj = json.loads(files["Metadata/plate_1.json"])
+            if pj.get("first_layer_time") != flt:
+                pj["first_layer_time"] = flt
+                files["Metadata/plate_1.json"] = json.dumps(pj, separators=(",", ":")).encode()
+                changed.append("plate_1.json")
         except ValueError:
-            v = float("nan")
-        return m.group(0) if 0 <= v < FIRST_LAYER_TIME_MAX else f'{m.group(1)}0.000000{m.group(3)}'
-
-    new = re.sub(r'(<metadata key="first_layer_time" value=")([^"]*)(")', fix_flt, new, count=1)
-    if new == data:
-        return False
+            pass
+    new_names = []
+    for key, name in THUMBS.items():
+        if images and key in images and name not in files:
+            files[name] = images[key]
+            new_names.append(name)
+    if new_names:
+        changed.append("thumbnails")
+    if not changed:
+        return {"changed": []}
     tmp = Path(tempfile.mkstemp(suffix=".3mf", dir=path.parent)[1])
-    with zipfile.ZipFile(path) as zin, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
-        for item in zin.infolist():
-            buf = new.encode("utf-8") if item.filename == "Metadata/slice_info.config" else zin.read(item.filename)
-            zout.writestr(item, buf)
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+        for info, _ in items:
+            zout.writestr(info, files[info.filename])
+        for name in new_names:
+            zout.writestr(name, files[name])
     shutil.move(str(tmp), str(path))
-    return True
+    return {"changed": changed}
+
+
+def patch_model_id(path: str | Path, model_id: str, plate: int = 1) -> bool:
+    """printer_model_id and a sane first_layer_time only (see finalize). Returns True if rewritten."""
+    return bool(finalize(path, model_id)["changed"])
