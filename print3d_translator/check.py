@@ -1,7 +1,7 @@
 """check.py — independent checks of a sliced plate: the G-code (as gcode.py reads it) against the study,
 our flattened profiles and the placed geometry. Nothing here trusts OrcaSlicer's own summary; its
 estimates are only compared with ours.
-Version: 2026.10.24.7
+Version: 2026.10.29.1
 
 Each check is {passed, hard, why, got, expected, ...}. A failed hard check makes the result
 unreliable. The checks:
@@ -23,6 +23,9 @@ unreliable. The checks:
   wrapping_area     no extrusion in the machine's wrapping-detection zone (soft)
   shared_nozzle     (multi-extruder) filaments with different temperatures not on one nozzle (soft)
   bed_vs_filaments  the bed not more than 10 C above a used filament's own bed temperature (soft)
+  unsupported_extrusion  every extrusion of the parts rests on the layer below or on support: no
+                    more than SEVERE_MAX mm farther than reach + 1 mm (supports.unsupported)
+  long_bridges      bridges (unsupported stretches held at both ends) up to BRIDGE_MAX mm (soft)
   estimates         OrcaSlicer's filament lengths and weights = ours (soft)
 """
 from __future__ import annotations
@@ -38,6 +41,7 @@ TOL_Z = 0.005           # mm
 TOL_XY = 0.05           # mm, bounds
 SUPPORT_MARGIN = 5.0    # mm beyond the silhouette that supports may reach
 AUTO_BRIM_MAX = 10.0    # mm, allowance for brim_type auto_brim (assumption; see README)
+SEVERE_MAX = 5.0        # mm of extrusion more than 1 mm beyond support (noise allowance)
 
 
 def _c(passed: bool, why: str, hard: bool = True, **kw) -> dict:
@@ -299,6 +303,10 @@ def check_gcode(P: G.Parsed, resolved: dict, objects: list[dict], tower_bbox: li
             checks["wrapping_area"] = _c(n_in == 0, "no extrusion in the machine's wrapping-detection zone",
                                          hard=False, got={"points_inside": n_in}, expected={"zone": poly.tolist()})
 
+    # extrusion with nothing below it
+    if printing.any():
+        checks["unsupported_extrusion"], checks["long_bridges"] = _support(P, pv, mv)
+
     # estimates (OrcaSlicer's vs ours)
     checks["estimates"], estimate = _estimates(P, fils, diam)
     return {"checks": checks, "gcode": G.summary(P, diam), "estimate": estimate}
@@ -526,6 +534,45 @@ def _estimates(P: G.Parsed, fils: list[dict], diam: list[float]) -> tuple[dict, 
     return _c(ok, "OrcaSlicer's filament totals equal ours, flushes included (0.5% length, 2% weight)", hard=False,
               got={"total_mm": [round(tot_orca, 2), round(tot_ours, 2)], "total_g": [g_orca, round(g_ours_total, 2)],
                    "by_filament": rows}), est
+
+
+def support_params(pv, nozzle: float) -> dict:
+    """The support check's inputs from the process settings (pv(key, default))."""
+    def width(key):
+        v = _first(pv(key), "")
+        if str(v).endswith("%"):
+            return _f(v) / 100 * nozzle
+        return _f(v, 0.0)
+    lw = max(width("outer_wall_line_width"), width("line_width")) or 1.05 * nozzle
+    on = str(_first(pv("enable_support"), "0")).lower() not in ("0", "false")
+    return {"line_width": lw, "layer_height": _f(pv("layer_height"), 0.2),
+            "angle_deg": _f(pv("support_threshold_angle"), 30) or 30.0,
+            "support_spacing": _f(pv("support_base_pattern_spacing"), 2.5), "supports": on}
+
+
+def _support(P: G.Parsed, pv, mv) -> tuple[dict, dict]:
+    from . import supports as S
+    nozzle = _f(mv("nozzle_diameter"), 0.4)
+    sp = support_params(pv, nozzle)
+    u = S.unsupported(P, sp["line_width"], sp["layer_height"], sp["angle_deg"], sp["support_spacing"])
+    problems = []
+    for w in u["worst"]:
+        if w["severe_mm"] <= 0:
+            continue
+        what = "starts in mid-air" if w["floating"] else f"reaches {w['max_beyond_mm']} mm past what is below"
+        problems.append(f"z {w['z_mm']} mm at {w['xy']} ({', '.join(w['objects'])}): {w['severe_mm']} mm of "
+                        f"extrusion {what}")
+    fix = "enable supports (intent.supports 'tree'), or orient the part so it grows from what is below"         if not sp["supports"] else "supports do not reach it: lower support_angle, or orient the part differently"
+    passed = u["severe_mm"] <= SEVERE_MAX
+    got = {k: u[k] for k in ("reach_mm", "unsupported_mm", "severe_mm", "layers_affected", "worst")}
+    unsup = _c(passed, f"every extrusion of the parts rests on the layer below or on support (within reach "
+                       f"{u['reach_mm']} mm = half a line + layer_height / tan(support_angle); at most "
+                       f"{SEVERE_MAX:g} mm more than 1 mm beyond it)" + ("" if passed else f"; fix: {fix}"),
+               got=got, expected={"severe_mm_max": SEVERE_MAX, "supports": sp["supports"]}, problems=problems)
+    lb = u["long_bridges"]
+    bridges = _c(lb["longest_mm"] <= S.BRIDGE_MAX, f"bridges up to {S.BRIDGE_MAX:g} mm (longer ones sag)", hard=False,
+                 got=lb, problems=[f"z {w['z_mm']} mm: bridge of {w['span_mm']} mm" for w in lb["worst"]])
+    return unsup, bridges
 
 
 def verdict(checks: dict) -> tuple[bool, list[str]]:

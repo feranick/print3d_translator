@@ -1,6 +1,7 @@
 """viewer.py — a self-contained 3D view of a study (<name>.view.html): the placed parts on the bed and the
-toolpaths our own G-code reader found, with a layer slider and colours by feature or by filament.
-Version: 2026.10.24.10
+toolpaths our own G-code reader found, with a layer slider and colours by feature or by filament;
+extrusion with nothing below it (supports.unsupported) is drawn red in both modes.
+Version: 2026.10.29.1
 
 One HTML file, no internet needed: plain WebGL2 (no libraries), the geometry and toolpaths embedded as
 zlib-compressed binary (base64) and inflated by the browser (DecompressionStream). Open it in any recent
@@ -26,6 +27,7 @@ FEATURES = [
     ("Bottom surface", "#665cc7"), ("Bridge", "#4d80ba"), ("Gap infill", "#e6e6e6"),
     ("Support", "#00c000"), ("Support interface", "#008000"), ("Brim / skirt", "#00876e"),
     ("Prime tower", "#b3e3ab"), ("Ironing", "#ff8c69"), ("Other", "#909090"),
+    ("Unsupported", "#ff0000"),
 ]
 FEATURE_INDEX = {n: i for i, (n, _) in enumerate(FEATURES)}
 
@@ -69,14 +71,17 @@ def _mesh_arrays(tri: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return verts, idx
 
 
-def _toolpaths(P: G.Parsed):
-    """Polylines of the print region: points (n, 2) uint16, records (m, 5): start, count, layer, feature, tool."""
+def _toolpaths(P: G.Parsed, flags: np.ndarray | None = None):
+    """Polylines of the print region: points (n, 2) uint16, records (m, 5): start, count, layer, feature, tool.
+    flags (bool per segment of P): drawn as feature 'Unsupported'."""
     if P is None or not len(P.segments):
         return np.zeros((0, 2), np.uint16), np.zeros((0, 5), np.uint32), []
     m = P.seg_info[:, 0] == 1
     s, info = P.segments[m], P.seg_info[m]
     feats = np.array([feature_group(f) for f in P.features], dtype=np.int64)
     fg = feats[info[:, 2]]
+    if flags is not None and len(flags) == len(P.segments):
+        fg[flags[m]] = FEATURE_INDEX["Unsupported"]
     q = np.clip(np.round((s[:, :4] + 20.0) / 0.01), 0, 65535).astype(np.int64)
     pts, recs = [], []
     n = len(s)
@@ -98,8 +103,10 @@ def _toolpaths(P: G.Parsed):
 
 
 def build(objects: list[dict], bed: np.ndarray, height: float, P: G.Parsed | None = None,
-          filament_colors: list[str] | None = None, title: str = "", summary: dict | None = None) -> str:
-    """objects: [{name, tri (placed), color}]. Returns the HTML text."""
+          filament_colors: list[str] | None = None, title: str = "", summary: dict | None = None,
+          flags: np.ndarray | None = None) -> str:
+    """objects: [{name, tri (placed), color}]; flags: unsupported segments of P (drawn red in both colour
+    modes). Returns the HTML text."""
     blobs, meta_objs, off = [], [], 0
     for o in objects:
         v, i = _mesh_arrays(np.asarray(o["tri"], dtype=float))
@@ -107,7 +114,7 @@ def build(objects: list[dict], bed: np.ndarray, height: float, P: G.Parsed | Non
                           "v": [off, int(v.size)], "i": [off + v.nbytes, int(i.size)]})
         blobs += [v.tobytes(), i.tobytes()]
         off += v.nbytes + i.nbytes
-    pts, recs, layer_z = _toolpaths(P)
+    pts, recs, layer_z = _toolpaths(P, flags)
     tp = {"pts": [off, int(pts.size)], "recs": [off + pts.nbytes, int(recs.size)]}
     blobs += [pts.tobytes(), recs.tobytes()]
     raw = b"".join(blobs)
@@ -153,7 +160,7 @@ const META=JSON.parse(document.getElementById('meta').textContent), DATA="__DATA
 const $=id=>document.getElementById(id);
 $('t').textContent=META.title;
 const S=META.summary||{};
-$('s').innerHTML=[S.printer,S.time,S.filament,S.reliable===undefined?'':(S.reliable?'<span class="ok">reliable</span>':'<span class="bad">not reliable</span>')].filter(Boolean).join(' &middot; ');
+$('s').innerHTML=[S.printer,S.time,S.filament,S.reliable===undefined?'':(S.reliable?'<span class="ok">reliable</span>':'<span class="bad">not reliable</span>'),S.unsupported?`<span class="bad">${S.unsupported}</span>`:''].filter(Boolean).join(' &middot; ');
 function hex(c){c=(c||'#888888').replace('#','');return[0,2,4].map(i=>parseInt(c.substr(i,2),16)/255);}
 async function inflate(b64){const bin=Uint8Array.from(atob(b64),c=>c.charCodeAt(0));
  const ds=new Blob([bin]).stream().pipeThrough(new DecompressionStream('deflate'));return await new Response(ds).arrayBuffer();}
@@ -192,15 +199,16 @@ const recs=[];for(let i=0;i<R.length;i+=5)recs.push(R.subarray(i,i+5));
 recs.sort((a,b)=>a[2]-b[2]);
 let nseg=0;for(const r of recs)nseg+=r[1]-1;
 const LP=new Float32Array(nseg*6),CF=new Float32Array(nseg*6),CT=new Float32Array(nseg*6),off=new Int32Array(NL+1);
+const UF=META.features.findIndex(f=>f[0]=='Unsupported');
 const fcol=META.features.map(f=>hex(f[1])),tcol=(META.filament_colors.length?META.filament_colors:['#3b82f6','#ef4444','#22c55e','#eab308']).map(hex);
 let k=0,cur=0;
 for(const r of recs){const[s,c,l,f,t]=r;while(cur<=l&&cur<=NL){off[cur]=k;cur++;}const z=LZ[l]||0;
  for(let j=0;j<c-1;j++){const a=(s+j)*2,b=(s+j+1)*2;LP.set([PTS[a]*.01-20,PTS[a+1]*.01-20,z,PTS[b]*.01-20,PTS[b+1]*.01-20,z],k*6);
-  const cf=fcol[f]||fcol[fcol.length-1],ct=tcol[t%tcol.length];CF.set([...cf,...cf],k*6);CT.set([...ct,...ct],k*6);k++;}}
+  const cf=fcol[f]||fcol[fcol.length-1],ct=f==UF?fcol[UF]:tcol[t%tcol.length];CF.set([...cf,...cf],k*6);CT.set([...ct,...ct],k*6);k++;}}
 while(cur<=NL){off[cur]=k;cur++;}
 const pathVA={f:vbo(PL,[['p',LP,3],['c',CF,3]]),t:vbo(PL,[['p',LP,3],['c',CT,3]])};
 const sl=$('layer');sl.max=NL-1;sl.value=NL-1;
-const leg=()=>{const m=$('mode').value;$('legend').innerHTML=(m=='f'?META.features.map(f=>[f[0],f[1]]):META.filament_colors.map((c,i)=>['Filament '+(i+1),c])).map(([n,c])=>`<span><i style="background:${c}"></i>${n}</span>`).join('');};
+const leg=()=>{const m=$('mode').value;$('legend').innerHTML=(m=='f'?META.features.map(f=>[f[0],f[1]]):META.filament_colors.map((c,i)=>['Filament '+(i+1),c]).concat(S.unsupported?[META.features[UF]]:[])).map(([n,c])=>`<span><i style="background:${c}"></i>${n}</span>`).join('');};
 leg();
 const has=OB[0]<OB[3],ext=has?Math.max(OB[3]-OB[0],OB[4]-OB[1],OB[5]-OB[2],20):Math.max(W,H);
 let az,el,dist,tg;const reset=()=>{az=-2.2;el=.55;dist=has?ext*2.6:Math.max(W,H)*1.35;tg=has?[(OB[0]+OB[3])/2,(OB[1]+OB[4])/2,(OB[2]+OB[5])/3]:[(lo[0]+lo[2])/2,(lo[1]+lo[3])/2,0];draw();};
@@ -233,8 +241,8 @@ reset();
 """
 
 
-def write(path, objects, bed, height, P=None, filament_colors=None, title="", summary=None) -> str:
-    text = build(objects, bed, height, P, filament_colors, title, summary)
+def write(path, objects, bed, height, P=None, filament_colors=None, title="", summary=None, flags=None) -> str:
+    text = build(objects, bed, height, P, filament_colors, title, summary, flags)
     with open(path, "w", encoding="utf-8") as f:
         f.write(text)
     return str(path)
@@ -258,11 +266,20 @@ def for_study(folder, res: dict | None = None) -> str:
              "color": colors[o["filaments"][0] - 1] if o["filaments"][0] - 1 < len(colors) else "#c8c8c8"} for o in asm]
     gpath = d / f"{name}.gcode"
     P = G.parse(gpath.read_text(errors="replace")) if gpath.exists() else None
+    flags, unsup = None, None
+    if P is not None and len(P.segments):
+        from . import supports as S
+        process = json.loads((d / "profiles" / "process.json").read_text())
+        sp = C.support_params(lambda k, dflt=None: process.get(k, dflt), C._f(machine.get("nozzle_diameter"), 0.4))
+        u = S.unsupported(P, sp["line_width"], sp["layer_height"], sp["angle_deg"], sp["support_spacing"])
+        flags = u["flags"]
+        if u["severe_mm"] > 0:
+            unsup = f"{u['severe_mm']} mm unsupported (red)"
     est = res.get("estimate") or {}
     pr = res.get("printer") or {}
     summary = {"printer": f"{pr.get('name', '')} {pr.get('nozzle', '')} mm".strip(),
                "time": est.get("time"), "filament": f"{est.get('filament_g')} g" if est.get("filament_g") else None,
-               "reliable": res.get("reliable")}
+               "reliable": res.get("reliable"), "unsupported": unsup}
     out = d / f"{name}.view.html"
     return write(out, objs, C._poly(machine.get("printable_area")), C._f(machine.get("printable_height"), 250), P,
-                 colors, title=name, summary=summary)
+                 colors, title=name, summary=summary, flags=flags)

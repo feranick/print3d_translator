@@ -104,7 +104,7 @@ Settings, read from the environment:
 
 | Key | Content |
 |---|---|
-| `ok`, `reliable`, `unreliable_because`, `warnings` | whether it sliced, whether every hard check passed (if not, do not print it), and the soft findings (OrcaSlicer's own warnings, overhangs, thin walls, bed contact, shared nozzle, hot bed) |
+| `ok`, `reliable`, `unreliable_because`, `warnings` | whether it sliced, whether every hard check passed (if not, do not print it), and the soft findings (OrcaSlicer's own warnings, unsupported regions, long bridges, thin walls, bed contact, shared nozzle, hot bed) |
 | `files` | `gcode_3mf` (the file to print), `gcode`, `profiles` (the flattened copies), `log`, `command` |
 | `estimate` | `time_s`, `time`, `filament_g`, `filament_m`, `by_filament`: OrcaSlicer's numbers, checked against ours |
 | `objects.<name>` | `volume_mm3` (exact for STEP/b3dt), `volume_from`, `area_mm2`, `size_mm`, orientation, `centers`, `checks` (before slicing) |
@@ -124,7 +124,7 @@ Settings, read from the environment:
 | `fits` | the oriented part fits the area its extruder prints and the printable height | hard |
 | `closed_mesh` | a closed, consistently oriented mesh. Hard for STL/3MF; a warning for STEP tessellations. | hard (mesh) |
 | `bed_contact` | at least 20 mm² and 5% of the footprint flat on the bed, and height / √contact ≤ 10; otherwise use a brim or another orientation | soft |
-| `overhang` | the area of downward faces flatter than `support_angle` (OrcaSlicer's threshold), with supports `none`. It cannot tell bridges apart. | soft |
+| `unsupported_regions` | with supports `none`: nothing starts in mid-air (island) and nothing reaches more than 1 mm past the layer below on one side only (cantilever). Ceilings held on two sides are bridges and pass. The part is voxelized at the real layer heights (0.25 mm grid, coarser for big parts). A warning only: `unsupported_extrusion` on the slice decides. | soft |
 | `thin_walls` | wall thickness from rays cast inward from area-weighted surface points (fixed seed); at most 1% thinner than one line (1.125 × nozzle) | soft |
 
 **Checks on the slice.** The checker reads the G-code itself (`gcode.py`) and does not trust OrcaSlicer's summary.
@@ -156,6 +156,8 @@ Settings, read from the environment:
 | `unlocated` | no extrusion of the print starts from an unknown position | hard |
 | `extrusion_volume` | per object: extruded volume vs walls + top/bottom shells + infill of its exact volume (±25%), never above 1.1 × the volume | hard |
 | `footprint` | no extrusion outside its allowed region: the object's silhouette + half a line, + brim, + support margin (5 mm); the prime tower inside its declared box and apart from the objects | hard |
+| `unsupported_extrusion` | every extrusion of the parts rests on the layer below, or on support up to 3 layers below. "Rests" means within reach = half a line + `layer_height` / tan(`support_angle`), 0.556 mm at 0.42 / 0.2 / 30°. What a layer offers the next is its area (perimeters filled) and its support lines with their spacing filled. An unsupported stretch held at both ends and about straight is a bridge and passes. Fails when more than 5 mm of extrusion lies more than 1 mm beyond reach; says where (z, xy, object), whether it starts in mid-air, and the fix. | hard |
+| `long_bridges` | bridges up to 15 mm (longer ones sag) | soft |
 | `travel`, `wrapping_area`, `estimates` | travel stays on the bed; nothing in the wrapping-detection zone; OrcaSlicer's filament totals equal ours (0.5% length, 2% weight). Ours include the firmware flushes on filament changes, which the G-code carries only as `;VG1 E…` comments in `VFLUSH` blocks. | soft |
 | `shared_nozzle` | (H2D) filaments whose print temperatures differ by more than 15 °C are not on the same nozzle. OrcaSlicer's auto map can put PLA and PETG on one nozzle. | soft |
 | `bed_vs_filaments` | the hottest bed of the print is not more than 10 °C above a used filament's own bed temperature. PLA + PETG on one plate gets a 70 °C bed on some or all layers. | soft |
@@ -177,8 +179,19 @@ Ten deliberate faults were each caught by the expected check: a part moved by 5 
 **b3dt → p3dt chain** (2026-10-24, on the Mac): parts built by build123d-translator's MCP server, given to p3dt as `{b3dt: {step, volume}}`. All reliable:
 - the bracket (49,069.8 mm³) on the P2S, H2S and H2D: 135 layers, 21.0 g, extruded volume 0.993 of the model;
 - the shelf (a 25 × 20 mm overhang at z = 25):
-  - without supports, `overhang` reports the 500 mm² underside;
+  - without supports, the 500 mm² underside was reported (as `overhang` then; now `unsupported_regions` and `unsupported_extrusion`);
   - with tree supports, 1438 mm³ of support from z 0.2 to 24.8, all within the part's silhouette.
+
+**Support detection** (2026-10-29) was checked against 59 slices from the Mac:
+- **The cradle that failed to print** (`examples/cradle.stl`, upright, no supports): a tooth starts in mid-air at z 42.6, 6 mm in front of the back plate. Its underside is 49° from horizontal, so a face-angle test misses it.
+  - Without supports: 165 mm unsupported, unreliable.
+  - With tree supports: 0 mm, reliable.
+  - Laid flat: a 7.5 mm cantilever, unreliable.
+- **Every bikeholder plate with that cradle** fails the same way. Some also have jaws that start in mid-air at z 17.2.
+- **Plates that pass:**
+  - the grid tiles, the mesh mat and coupons, and both pixel stands (whose 9.6 mm slot roofs are bridges);
+  - a battery tray, with a soft warning for its 21 mm bridges.
+- **Speed:** about 0.3–3 s per plate (1.1 M segments for the largest).
 
 **Benchmarks** (`p3dt bench`, on generated boxes with exact volumes):
 - `p2s_cube`: 20 mm PLA cube, 100 layers, 8000 mm³;
@@ -201,6 +214,7 @@ A benchmark passes when the result is reliable and its expected values hold.
 `"view": true` in a study, `p3dt view STUDY_FOLDER`, or the MCP tool `make_view` writes `<name>.view.html` next to the result. It shows:
 - the placed parts on the bed;
 - the toolpaths that our own G-code reader found, coloured by feature (outer and inner walls, infill, top and bottom surfaces, bridges, supports, brim, prime tower) or by filament;
+- extrusion with nothing below it (`unsupported_extrusion`) drawn red in both colour modes;
 - a layer slider, with an option to show only the current layer.
 
 To move around: drag to rotate, shift-drag to pan, scroll to zoom.
@@ -240,6 +254,7 @@ Put GUI exports (OrcaSlicer or Bambu Studio, "Export plate sliced file") in `deb
 | `gcode.py` | Read the G-code: segments with region, tool, feature, object and layer; temperatures; tool changes; header and footer. |
 | `gcode3mf.py` | Read and check the archive; compare the settings round trip; `finalize()` writes what OrcaSlicer's GUI export has and the CLI lacks. |
 | `viewer.py` | The self-contained 3D view (`<name>.view.html`). |
+| `supports.py` | Will it print without supports? `regions()` before slicing (voxels: islands, cantilevers, bridges), `unsupported()` after (G-code: extrusion with nothing below, flags for the view). |
 | `thumbs.py` | The plate pictures (isometric preview, top view, skip-object pick image), rendered from the placed meshes. |
 | `check.py` | The checks on the slice. |
 | `format.py` | `study_format` and validation, including OrcaSlicer's filament-compatibility rule. |
@@ -286,6 +301,7 @@ OrcaSlicer's profiles are AGPL-3.0, so they are read from the installed OrcaSlic
 
 | Version | Changes |
 |---|---|
+| 2026.10.29.1 | Support detection (`supports.py`): hard check `unsupported_extrusion` on the slice, soft `long_bridges`; `unsupported_regions` replaces `overhang` before slicing; unsupported toolpaths drawn red in the 3D view; `examples/cradle.stl`. |
 | 2026.10.24.10 | 3D view (`viewer.py`): study key `view`, `p3dt view`, MCP tool `make_view`. |
 | 2026.10.24.9 | S4 against OrcaSlicer's GUI exports. The G-code is equivalent. `gcode3mf.finalize()` and `thumbs.py` make the archive match the GUI's: plate pictures with the skip-object pick image, `model_settings` entries, per-extruder `nozzle_volume_type`, `first_layer_time` from the header. Soft check `thumbnails`; the plate name matches the GUI (""). |
 | 2026.10.24.8 | b3dt → p3dt chain tested on the Mac (bracket on P2S/H2S/H2D; a shelf with tree supports and without); `examples/s4_bracket.step`, `overhang_shelf.step`, `goals.json`; `slice_info` `first_layer_time` garbage reset; `tools/compare_bambu.py` (S4). |

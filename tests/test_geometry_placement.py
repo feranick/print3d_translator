@@ -1,5 +1,5 @@
 """Tests of geometry.py (loading, orientation, checks before slicing) and placement.py.
-Version: 2026.10.24.6
+Version: 2026.10.29.1
 """
 import json
 import zipfile
@@ -140,10 +140,11 @@ def test_checks_fit_and_height():
 def test_checks_overhang_and_supports():
     upside = M.transform(l_shape(), M.rotation(-90, 0, 0))         # a Γ: the top arm overhangs (20 x 5 mm)
     t, _, _ = Gm.orient(upside, "as_is")
-    c = checks_of(t)
-    assert c["overhang"]["got"]["area_mm2"] == pytest.approx(100, abs=1) and not c["overhang"]["passed"]
-    assert checks_of(l_shape())["overhang"]["got"]["area_mm2"] == 0
-    assert checks_of(t, supports="tree")["overhang"]["passed"]
+    c = checks_of(t)["unsupported_regions"]
+    assert c["got"]["overhang_area_mm2"] == pytest.approx(100, abs=1) and not c["passed"] and not c["hard"]
+    assert c["got"]["regions"][0]["kind"] == "cantilever"
+    assert checks_of(l_shape())["unsupported_regions"]["passed"]
+    assert checks_of(t, supports="tree")["unsupported_regions"]["passed"]
 
 
 def test_checks_small_contact_and_thin_walls():

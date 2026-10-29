@@ -1,7 +1,7 @@
 # print3d_translator: planning
 
 Session context. A new chat starts with "Read planning.md and start."
-Status: **complete end to end, 2026.10.24.10, verified on the Mac; S4 done against OrcaSlicer's GUI** (2026-10-24); verifying on the Mac (see "State log").
+Status: **complete end to end, 2026.10.29.1 (support detection), verified on the Mac's slices; S4 done against OrcaSlicer's GUI** (2026-10-29); see "State log".
 
 ## Decisions (2026-10-24)
 
@@ -395,3 +395,29 @@ One study = one plate. JSON, `{name: study}`. Units: mm, °C, %, mm/s.
   - Controls: layer slider, only-this-layer, colour by feature or filament, orbit/pan/zoom. The camera frames the parts.
   - Checked in the preview panel: the shelf with green tree supports, and the bracket with its top surface and walls. 207–289 kB, 0.2 s.
   - Study key `view`, `p3dt view`, MCP `make_view`. 167 tests pass in the sandbox.
+- 2026-10-29: **Support detection (2026.10.29.1).** The user's cradle (bikeholder) failed to print: a tooth starts in mid-air at z 42.6, 6.3 mm in front of the back plate. Its underside is ~49° from horizontal, so the old face-angle `overhang` check missed it, and every earlier result was `reliable: true`.
+  - **`supports.unsupported(P, …)`, on the G-code (hard check `unsupported_extrusion`):**
+    - Per layer, the area below = the part's lines rasterized at 0.2 mm (2 px thick), holes filled (perimeters enclose what infill supports at crossings), plus support lines of up to 4 layers below with their spacing / 2 filled.
+    - Extrusion paths (segments continuing one another without a travel; the slicer may change feature mid-path) are sampled every 0.4 mm. A sample is unsupported beyond reach = lw/2 + lh/tan(angle).
+    - A run of unsupported samples with supported path on both sides and length ≤ 1.25 × chord + 1 mm is a bridge. It passes, and spans over 15 mm go to soft `long_bridges`. A loop around a cantilever comes back to the same side and is not straight, so it is not a bridge.
+    - Severe = more than 1 mm beyond reach; the check fails above 5 mm severe. `floating` = a whole path with nothing below.
+    - Distances are computed only in a window around the outside samples (EDT exact up to reach + spacing/2 + 2 mm).
+    - Speed: 0.3–3 s; the largest corpus plate has 1.1 M segments (was 21 s before windowing and vectorized sampling).
+  - **`supports.regions(tri, …)`, on the mesh, before slicing (soft `unsupported_regions`, replaces `overhang`):**
+    - Voxelized by vertical rays at the layer centres; 0.25 mm grid, coarsened to ≤ 4e7 cells.
+    - Unsupported voxels are labelled in 3D and classified on their first layer: island, bridge (≥ 2 separate contacts), or cantilever.
+    - `verdict()` fails islands and cantilevers more than 1 mm beyond support when supports are `none`.
+  - **Corpus: 59 slices in ~/p3dt_runs.**
+    - Flagged, and real: every bikeholder plate containing the cradle; jaws starting in mid-air at z 17.2; cradle laid flat (a 7.5 mm cantilever).
+    - Clean: grid tiles, mesh mat and coupons, pixel stands, battery tray (21 mm bridge, soft).
+    - Earlier false positives, fixed:
+      - slot roofs crossed by a wall: bridges were only those labelled Bridge; now anchored runs;
+      - an outer wall → overhang wall switch broke path chaining: chaining is now by position only;
+      - cantilever loops counted as bridges: added the straightness rule.
+  - **Viewer:** a feature "Unsupported" (red), used in both colour modes, and the summary shows "N mm unsupported". `for_study` recomputes the flags from profiles/process.json.
+  - **Tests:** tests/test_supports.py (column, taper, cantilever, island, short/long bridge, feature switch, support below, check, geometry Γ / island / bridge / coarsening, viewer). 181 pass in the sandbox.
+  - **Next:**
+    - Run the cradle study again on the Mac (none: unreliable; tree: reliable).
+    - Print the tree-support version.
+    - Optional: suggest an orientation automatically when supports are `none` and regions fail.
+

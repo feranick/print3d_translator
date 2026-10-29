@@ -1,6 +1,6 @@
 """mcp_server.py — MCP server (stdio): lets LLM-based tools turn parts into checked Bambu Lab print files
 with OrcaSlicer. It never talks to a printer.
-Version: 2026.10.24.10
+Version: 2026.10.29.1
 
 Tools (all JSON):
   study_format      the study format: printer, filaments, objects, intent, overrides. Read it first.
@@ -32,7 +32,9 @@ checks the result independently. It writes files only: it never sends anything t
 Workflow: call study_format once and follow its conventions; validate_studies and fix every error;
 run_studies (most plates finish in seconds; slow ones come back 'pending': collect with study_status).
 Before using a result check 'reliable' (false: do not print it; 'unreliable_because' says why), 'warnings'
-(overhangs without supports, thin walls, small bed contact, shared nozzle, hot bed) and 'checks'.
+(unsupported regions, long bridges, thin walls, small bed contact, shared nozzle, hot bed) and 'checks'.
+unsupported_extrusion fails when part of a layer has nothing below it (a feature starting in mid-air, a
+cantilever): enable supports ("tree") or orient the part differently, and say where it was (z, xy).
 The file to print is files.gcode_3mf: the user prints it from the printer's SD card, Bambu Studio or Handy.
 Hints: orient 'flat' puts the largest flat face down; 'at' [x, y] fixes a part's centre; H2D filaments take
 extruder 'left'/'right'; filaments at different temperatures on one nozzle need allow_mix_temp: true;
@@ -63,7 +65,8 @@ def run_studies(studies: dict, wait_s: float = 45) -> dict:
     """Slices and checks each study. Per study: reliable, unreliable_because, warnings, files (gcode_3mf to
     print, gcode, profiles, log), estimate (time, filament g and m), objects (exact volumes, orientation,
     placement, checks before slicing), checks (archive, md5, printer id, settings round trip, bounds,
-    layers, temperatures, tools, extrusion volume, footprint), expect. Returns after at most wait_s
+    layers, temperatures, tools, extrusion volume, footprint, unsupported extrusion), expect. Returns
+    after at most wait_s
     seconds (<= 50); unfinished studies are in 'pending' with progress: collect them with study_status.
     Each study is summarized (failed checks in full, passed ones by name); 'result' is the full JSON's path."""
     return api.summarize_request(api.run(studies, wait=min(max(float(wait_s), 0.0), 50.0)))

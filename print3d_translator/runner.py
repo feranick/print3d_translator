@@ -1,7 +1,7 @@
 """runner.py — one study end to end: validate, resolve profiles, load / orient / check / place the parts,
 write the flattened profiles, STLs and assemble list, run OrcaSlicer, fill in the archive's printer id,
 check everything independently, and write <name>.json (atomically).
-Version: 2026.10.24.10
+Version: 2026.10.29.1
 
 Study folder <name>/:
   profiles/          machine.json, process.json, filament_<i>.json (flattened copies; never the installed ones)
@@ -113,6 +113,7 @@ def prepare(name: str, study: dict, folder: Path, base_dir=None, exe: str | None
     supports = "none" if str(process.get("enable_support", "0")) in ("0", "false") else \
         ("tree" if "tree" in str(process.get("support_type", "")) else "auto")
     angle = _f(process.get("support_threshold_angle"), 30)
+    sp = C.support_params(lambda k, d=None: process.get(k, d), nozzle)
     brim_type = str(C._first(process.get("brim_type"), "auto_brim"))
     brim = 0.0 if brim_type == "no_brim" else _f(process.get("brim_width"), 5)
     halo = 3.0 + brim
@@ -139,7 +140,9 @@ def prepare(name: str, study: dict, folder: Path, base_dir=None, exe: str | None
         fil = int(o.get("filament", 1))
         exts = extruders_for(fil)
         area, area_name = area_for(exts)
-        pre = Gm.checks(part, area, height, nozzle, angle, supports, area_name)
+        pre = Gm.checks(part, area, height, nozzle, angle, supports, area_name, layer_height=sp["layer_height"],
+                        first_layer=_f(process.get("initial_layer_print_height"), sp["layer_height"]),
+                        line_width=sp["line_width"])
         for cn, ch in pre.items():
             if ch["hard"] and not ch["passed"]:
                 hard_bad.append(f"object {oname}: {cn}: {ch['why']} (got {ch.get('got')})")

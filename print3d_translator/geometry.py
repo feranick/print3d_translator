@@ -1,6 +1,6 @@
 """geometry.py — the parts: load them (STEP, STL, 3MF, a build123d-translator goal or result), orient
-them, and check them before slicing (fit, closed mesh, bed contact, overhangs, thin walls).
-Version: 2026.10.24.6
+them, and check them before slicing (fit, closed mesh, bed contact, unsupported regions, thin walls).
+Version: 2026.10.29.1
 
 Units mm, Z up. A loaded part is a dict:
   tri          (n, 3, 3) triangles, oriented, base on z = 0, centred on x = y = 0
@@ -325,9 +325,11 @@ def thin_walls(tri: np.ndarray, limit: float, samples: int = 1500, seed: int = 0
 
 
 def checks(part: dict, bed: np.ndarray, height: float, nozzle: float, support_angle: float, supports: str,
-           area_name: str = "printable area") -> dict:
+           area_name: str = "printable area", layer_height: float = 0.2, first_layer: float = 0.2,
+           line_width: float | None = None) -> dict:
     """Checks before slicing for one oriented part (base on z = 0). bed: the (n, 2) area its extruder
-    can print (rectangle). Hard: fits, closed. Soft: bed_contact, overhang, thin_walls."""
+    can print (rectangle). Hard: fits, closed. Soft: bed_contact, unsupported_regions, thin_walls.
+    (The G-code check unsupported_extrusion decides; unsupported_regions warns before slicing.)"""
     tri = part["tri"]
     lo, hi = M.bbox(tri)
     size = hi - lo
@@ -349,11 +351,15 @@ def checks(part: dict, bed: np.ndarray, height: float, nozzle: float, support_an
                                  "height_over_sqrt_contact": round(slender, 2)})
     th = support_angle if support_angle and support_angle > 0 else 30.0
     ov = overhang_area(tri, th)
-    ok_ov = supports != "none" or ov <= 25.0
-    out["overhang"] = _c(ok_ov, f"overhangs flatter than {th} deg from horizontal need supports (bridges between "
-                                f"walls are fine; this cannot tell them apart)",
-                         got={"area_mm2": round(ov, 1), "fraction": round(ov / max(part.get('area') or M.area(tri), 1e-9), 4),
-                              "supports": supports})
+    from . import supports as S
+    reg = S.regions(tri, first_layer, layer_height, line_width or 1.05 * nozzle, th)
+    ok_reg, problems = S.verdict(reg, supports)
+    out["unsupported_regions"] = _c(
+        ok_reg, "nothing starts in mid-air (island) or reaches more than 1 mm past the layer below on one side "
+                "(cantilever) without supports; fix: intent.supports 'tree', or another orientation",
+        got={"supports": supports, "reach_mm": reg["reach_mm"], "grid_mm": reg["grid_mm"],
+             "regions": reg["regions"][:5], "overhang_area_mm2": round(ov, 1)},
+        problems=problems[:5])
     lw = 1.125 * nozzle
     tw = thin_walls(tri, lw)
     out["thin_walls"] = _c(tw["thin_fraction"] <= 0.01, f"walls at least one line ({lw:.2f} mm) thick; thinner "
