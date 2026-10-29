@@ -1,7 +1,7 @@
 """check.py — independent checks of a sliced plate: the G-code (as gcode.py reads it) against the study,
 our flattened profiles and the placed geometry. Nothing here trusts OrcaSlicer's own summary; its
 estimates are only compared with ours.
-Version: 2026.10.29.1
+Version: 2026.10.29.2
 
 Each check is {passed, hard, why, got, expected, ...}. A failed hard check makes the result
 unreliable. The checks:
@@ -559,7 +559,8 @@ def _support(P: G.Parsed, pv, mv) -> tuple[dict, dict]:
     for w in u["worst"]:
         if w["severe_mm"] <= 0:
             continue
-        what = "starts in mid-air" if w["floating"] else f"reaches {w['max_beyond_mm']} mm past what is below"
+        what = "starts in mid-air" if w["floating"] else \
+            f"reaches {'more than ' if w['beyond_at_least'] else ''}{w['max_beyond_mm']} mm past what is below"
         problems.append(f"z {w['z_mm']} mm at {w['xy']} ({', '.join(w['objects'])}): {w['severe_mm']} mm of "
                         f"extrusion {what}")
     fix = "enable supports (intent.supports 'tree'), or orient the part so it grows from what is below"         if not sp["supports"] else "supports do not reach it: lower support_angle, or orient the part differently"

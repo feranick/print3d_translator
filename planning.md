@@ -1,7 +1,7 @@
 # print3d_translator: planning
 
 Session context. A new chat starts with "Read planning.md and start."
-Status: **complete end to end, 2026.10.29.1 (support detection), verified on the Mac's slices; S4 done against OrcaSlicer's GUI** (2026-10-29); see "State log".
+Status: **complete end to end, 2026.10.29.2 (support detection), verified on the Mac through MCP; S4 done against OrcaSlicer's GUI** (2026-10-29); see "State log".
 
 ## Decisions (2026-10-24)
 
@@ -420,4 +420,10 @@ One study = one plate. JSON, `{name: study}`. Units: mm, °C, %, mm/s.
     - Run the cradle study again on the Mac (none: unreliable; tree: reliable).
     - Print the tree-support version.
     - Optional: suggest an orientation automatically when supports are `none` and regions fail.
+- 2026-10-29: **2026.10.29.2, on the Mac through MCP** (run_20261029_095446_8b4387).
+  - Results: cradle_none unreliable (165 mm floating at z 42.6, pre-check: 2 islands at z 42); cradle_tree reliable, every check passed; cradle_flat_none unreliable (two 7.5 mm cantilevers at z 27.2).
+  - Fixes from that run:
+    - "more than N mm" when beyond the EDT window (`beyond_at_least`);
+    - pre-slice warnings carry their problems;
+    - cantilevers ≤ 1 mm (chamfers) are left out of the reported regions.
 

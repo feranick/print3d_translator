@@ -1,5 +1,5 @@
 """supports.py — will the part print without supports? Two independent answers:
-Version: 2026.10.29.1
+Version: 2026.10.29.2
 
 1. From the geometry, before slicing (regions()): the part is voxelized at the real layer heights
    (vertical rays through a 0.25 mm grid, inside/outside from the mesh's crossings). On each layer,
@@ -156,7 +156,7 @@ def verdict(reg: dict, supports: str, bridge_max: float = 25.0) -> tuple[bool, l
     bridge_max mm are reported (they sag) but do not fail."""
     problems = []
     for g in reg["regions"]:
-        where = f"z {g['z_mm'][0]}-{g['z_mm'][1]} mm at {g['center_xy']}"
+        where = f"z {g['z_mm'][0]}-{g['z_mm'][1]} mm, part xy {g['center_xy']}"
         if g["kind"] == "island":
             problems.append(f"island of {g['area_mm2']} mm2 starting in mid-air ({where})")
         elif g["kind"] == "cantilever" and (g["beyond_mm"] or 0) > 1.0:
@@ -226,7 +226,7 @@ def unsupported(P, line_width: float, layer_height: float, angle_deg: float, sup
     Returns {reach_mm, unsupported_mm (past reach), severe_mm (more than 1 mm past reach), by_layer,
     worst, layers_affected, long_bridges, flags (bool per segment of P: severe)}. worst[].floating: a
     whole extrusion path with nothing below (it starts in mid-air). Distances are exact up to reach +
-    support_spacing / 2 + 2 mm; max_beyond_mm stops there."""
+    support_spacing / 2 + 2 mm; max_beyond_mm stops there (beyond_at_least: true)."""
     from scipy import ndimage
     from .check import category
     seg, info = P.segments, P.seg_info
@@ -364,7 +364,8 @@ def unsupported(P, line_width: float, layer_height: float, angle_deg: float, sup
     lz = {i: l.get("z_height") for i, l in enumerate(P.layers)}
     worst = sorted(out["by_layer"].items(), key=lambda kv: (-kv[1][1], -kv[1][0]))[:5]
     out["worst"] = [{"layer": L + 1, "z_mm": lz.get(L), "mm": v[0], "severe_mm": v[1],
-                     "max_beyond_mm": round(v[2] - r, 2), "floating": bool(floating.get(L)),
+                     "max_beyond_mm": round(v[2] - r, 2), "beyond_at_least": bool(v[2] >= margin - 1e-6),
+                     "floating": bool(floating.get(L)),
                      "xy": where[L][0], "objects": where[L][1]} for L, v in worst]
     out["layers_affected"] = len(out["by_layer"])
     lb = sorted(out["long_bridges"], key=lambda v: -v[1])

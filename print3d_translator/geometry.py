@@ -1,6 +1,6 @@
 """geometry.py — the parts: load them (STEP, STL, 3MF, a build123d-translator goal or result), orient
 them, and check them before slicing (fit, closed mesh, bed contact, unsupported regions, thin walls).
-Version: 2026.10.29.1
+Version: 2026.10.29.2
 
 Units mm, Z up. A loaded part is a dict:
   tri          (n, 3, 3) triangles, oriented, base on z = 0, centred on x = y = 0
@@ -358,7 +358,8 @@ def checks(part: dict, bed: np.ndarray, height: float, nozzle: float, support_an
         ok_reg, "nothing starts in mid-air (island) or reaches more than 1 mm past the layer below on one side "
                 "(cantilever) without supports; fix: intent.supports 'tree', or another orientation",
         got={"supports": supports, "reach_mm": reg["reach_mm"], "grid_mm": reg["grid_mm"],
-             "regions": reg["regions"][:5], "overhang_area_mm2": round(ov, 1)},
+             "regions": [g for g in reg["regions"] if g["kind"] != "cantilever" or (g["beyond_mm"] or 0) > 1.0][:5],
+             "overhang_area_mm2": round(ov, 1)},
         problems=problems[:5])
     lw = 1.125 * nozzle
     tw = thin_walls(tri, lw)

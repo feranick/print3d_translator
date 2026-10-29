@@ -301,6 +301,7 @@ OrcaSlicer's profiles are AGPL-3.0, so they are read from the installed OrcaSlic
 
 | Version | Changes |
 |---|---|
+| 2026.10.29.2 | Support messages: "more than N mm" when the distance passes the computed window; pre-slice warnings name what they found; chamfer slivers left out of `unsupported_regions`. Checked on the Mac through MCP (cradle: none and flat unreliable, tree reliable). |
 | 2026.10.29.1 | Support detection (`supports.py`): hard check `unsupported_extrusion` on the slice, soft `long_bridges`; `unsupported_regions` replaces `overhang` before slicing; unsupported toolpaths drawn red in the 3D view; `examples/cradle.stl`. |
 | 2026.10.24.10 | 3D view (`viewer.py`): study key `view`, `p3dt view`, MCP tool `make_view`. |
 | 2026.10.24.9 | S4 against OrcaSlicer's GUI exports. The G-code is equivalent. `gcode3mf.finalize()` and `thumbs.py` make the archive match the GUI's: plate pictures with the skip-object pick image, `model_settings` entries, per-extruder `nozzle_volume_type`, `first_layer_time` from the header. Soft check `thumbnails`; the plate name matches the GUI (""). |

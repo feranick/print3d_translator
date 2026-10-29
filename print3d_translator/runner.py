@@ -1,7 +1,7 @@
 """runner.py — one study end to end: validate, resolve profiles, load / orient / check / place the parts,
 write the flattened profiles, STLs and assemble list, run OrcaSlicer, fill in the archive's printer id,
 check everything independently, and write <name>.json (atomically).
-Version: 2026.10.29.1
+Version: 2026.10.29.2
 
 Study folder <name>/:
   profiles/          machine.json, process.json, filament_<i>.json (flattened copies; never the installed ones)
@@ -147,7 +147,8 @@ def prepare(name: str, study: dict, folder: Path, base_dir=None, exe: str | None
             if ch["hard"] and not ch["passed"]:
                 hard_bad.append(f"object {oname}: {cn}: {ch['why']} (got {ch.get('got')})")
             elif not ch["passed"]:
-                warnings.append(f"object {oname}: {cn}: {ch['why']}")
+                warnings.append(f"object {oname}: {cn}: {ch['why']}"
+                                + (f" ({'; '.join(ch['problems'][:3])})" if ch.get("problems") else ""))
         size = np.ptp(tri.reshape(-1, 3), axis=0)
         objects[oname] = {"volume_mm3": round(part["volume"], 3), "volume_from": part["volume_from"],
                           "area_mm2": round(part["area"], 2), "size_mm": [round(float(s), 3) for s in size],

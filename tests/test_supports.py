@@ -73,7 +73,7 @@ def test_cantilever_is_severe_and_flagged():
     u = run(P)
     assert u["severe_mm"] > 30
     w = u["worst"][0]
-    assert w["layer"] == 11 and w["z_mm"] == pytest.approx(2.2) and not w["floating"]
+    assert w["layer"] == 11 and w["z_mm"] == pytest.approx(2.2) and not w["floating"] and w["beyond_at_least"]
     assert w["objects"] == ["part_1"] and 40 <= w["xy"][0] <= 50 and w["xy"][1] > 50
     flagged = P.segments[u["flags"]]
     assert len(flagged) and (np.maximum(flagged[:, 1], flagged[:, 3]) > 52).all()
