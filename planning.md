@@ -444,3 +444,6 @@ One study = one plate. JSON, `{name: study}`. Units: mm, °C, %, mm/s.
   - `supports_decision` = {used, why, without_supports {result, severe_mm}, support_cost {filament_g, time_s}, seconds_without}.
   - Otherwise `used: none`. `validate` doubles the time estimate. fake_orca mode `overhang` (walls inset 6 mm except the top 2 layers; support lines when enabled); `test_supports_needed`. 183 tests pass.
 
+- 2026-10-30: **"needed" on the Mac through MCP** (run_20261030_101014_2518e4).
+  - The cradle was sliced again with tree supports: reliable, +4.32 g, +19 min. The slice without supports is kept in `no_supports/`.
+  - The KF16 adapter stayed without supports ("nothing has to be held up").
