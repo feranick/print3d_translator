@@ -1,7 +1,7 @@
 # print3d_translator: planning
 
 Session context. A new chat starts with "Read planning.md and start."
-Status: **complete end to end, 2026.10.29.2 (support detection), verified on the Mac through MCP; S4 done against OrcaSlicer's GUI** (2026-10-29); see "State log".
+Status: **complete end to end, 2026.10.30.1 (support detection), verified on the Mac through MCP; S4 done against OrcaSlicer's GUI** (2026-10-29); see "State log".
 
 ## Decisions (2026-10-24)
 
@@ -426,4 +426,16 @@ One study = one plate. JSON, `{name: study}`. Units: mm, °C, %, mm/s.
     - "more than N mm" when beyond the EDT window (`beyond_at_least`);
     - pre-slice warnings carry their problems;
     - cantilevers ≤ 1 mm (chamfers) are left out of the reported regions.
+- 2026-10-30: **2026.10.30.1.**
+  - The user asked whether supports are made only where needed. Bambu's P2S exhaust kit .3mf uses:
+    - project-wide tree(auto) at 30° (the same as our `"tree"`);
+    - per object: supports off on one object, `tree_hybrid` on another;
+    - painted blockers (737 triangles) and 12 enforcer triangles on two objects (`paint_supports` "8" = blocker, "4" = enforcer).
+  - Cradle comparison: tree, tree + `support_critical_regions_only`, and tree at 15° all gave 51.7 g, about 4 g of it support under the tooth. So tree(auto) already supports only what it needs here.
+  - Bug found with `supports: "auto"` (normal): OrcaSlicer prints support-only layers at their own heights.
+    - `layers` failed (676 vs 570 levels);
+    - `unsupported_extrusion` compared part layers with support-only layers (51 m of false "floating");
+    - fixed in both checks; test_support_only_layers_between_part_layers.
+  - `tools/support_corpus.py`: all current runs consistent (old cradle plates fail; bikeholder 10-29-2, vacuum inlets, kf16, tray clean).
+  - Open: `supports: "needed"` (slice without, re-slice with tree only if unsupported_extrusion fails); per-object supports; enforcers from flagged regions (tree(manual)) need painted 3MF input. Both of the last two need a CLI spike.
 

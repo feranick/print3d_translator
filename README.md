@@ -301,6 +301,7 @@ OrcaSlicer's profiles are AGPL-3.0, so they are read from the installed OrcaSlic
 
 | Version | Changes |
 |---|---|
+| 2026.10.30.1 | Normal supports print support-only layers at their own heights (`independent_support_layer_height`): `layers` counts them apart, `unsupported_extrusion` compares with the part's previous layer plus support within 4 layer heights (was: 51 m of false "mid-air" on the cradle with normal supports). `tools/support_corpus.py` scans finished studies. |
 | 2026.10.29.2 | Support messages: "more than N mm" when the distance passes the computed window; pre-slice warnings name what they found; chamfer slivers left out of `unsupported_regions`. Checked on the Mac through MCP (cradle: none and flat unreliable, tree reliable). |
 | 2026.10.29.1 | Support detection (`supports.py`): hard check `unsupported_extrusion` on the slice, soft `long_bridges`; `unsupported_regions` replaces `overhang` before slicing; unsupported toolpaths drawn red in the 3D view; `examples/cradle.stl`. |
 | 2026.10.24.10 | 3D view (`viewer.py`): study key `view`, `p3dt view`, MCP tool `make_view`. |

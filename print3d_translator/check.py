@@ -1,7 +1,7 @@
 """check.py — independent checks of a sliced plate: the G-code (as gcode.py reads it) against the study,
 our flattened profiles and the placed geometry. Nothing here trusts OrcaSlicer's own summary; its
 estimates are only compared with ours.
-Version: 2026.10.29.2
+Version: 2026.10.30.1
 
 Each check is {passed, hard, why, got, expected, ...}. A failed hard check makes the result
 unreliable. The checks:
@@ -11,7 +11,8 @@ unreliable. The checks:
                     prints it (H2D: per-extruder areas), with 0 < z <= printable height
   travel            travel moves of the print stay within the bed, 1 mm margin (soft)
   layers            layer count and heights: first layer = initial_layer_print_height, then
-                    layer_height; the top at the part height (+- half a layer)
+                    layer_height; the top at the part height (+- half a layer). Support-only layers
+                    (support at its own layer heights) are counted apart
   first_layer       the first extrusion is at the first layer height, and every object has some
   tools             each object is printed with its own filament; only the study's filaments are used
   temperatures      nozzle and bed targets = the filament's (first layer, then others), within its range
@@ -241,17 +242,22 @@ def check_gcode(P: G.Parsed, resolved: dict, objects: list[dict], tower_bbox: li
     h1 = _f(pv("initial_layer_print_height"), 0.2)
     lh = _f(pv("layer_height"), 0.2)
     H = max(float(M.bbox(o["tri"])[1][2]) for o in objects) if objects else 0.0
-    zl = G.print_z_levels(P) if len(seg) else np.array([])
+    # support printed at its own layer heights (independent_support_layer_height, normal supports) adds
+    # support-only layers between the part's: the part's layers are those with anything but support
+    part = printing & (cats != "support") if len(seg) else np.zeros(0, dtype=bool)
+    zl = np.unique(np.round(seg[part, 4], 3)) if part.any() else np.array([])
+    sup_only = sorted(set(info[printing, 4].tolist()) - set(info[part, 4].tolist())) if printing.any() else []
     n_exp = 1 + max(0, int(math.floor((H - h1) / lh + 0.5))) if H > 0 else 0
     dz = np.diff(zl) if len(zl) > 1 else np.array([])
     steps_ok = bool(len(dz) == 0 or (np.all(np.abs(dz[:-1] - lh) <= TOL_Z) and 0 < dz[-1] <= lh + TOL_Z))
     first_ok = bool(len(zl) and abs(zl[0] - h1) <= TOL_Z)
     top_ok = bool(len(zl) and abs(zl[-1] - H) <= lh / 2 + TOL_Z)
-    count_ok = abs(len(zl) - n_exp) <= 1 and len(zl) == len(P.layers) and \
+    count_ok = abs(len(zl) - n_exp) <= 1 and len(zl) == len(P.layers) - len(sup_only) and \
         (P.header.get("layers") in (None, len(P.layers)))
     checks["layers"] = _c(count_ok and steps_ok and first_ok and top_ok,
                           "layer count and heights as the study asks (first layer, then layer_height, top at the part height)",
-                          got={"levels": int(len(zl)), "layer_markers": len(P.layers), "header": P.header.get("layers"),
+                          got={"levels": int(len(zl)), "layer_markers": len(P.layers), "support_only_layers": len(sup_only),
+                               "header": P.header.get("layers"),
                                "first": float(zl[0]) if len(zl) else None, "top": float(zl[-1]) if len(zl) else None,
                                "steps": sorted({round(float(v), 4) for v in dz})[:6]},
                           expected={"levels": n_exp, "first": h1, "layer_height": lh, "top": round(H, 4)})

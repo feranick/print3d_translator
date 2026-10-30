@@ -1,6 +1,6 @@
 """Tests of supports.py: unsupported regions of a mesh (before slicing), unsupported extrusion in G-code
 (after slicing), the check_gcode check and the viewer's red toolpaths.
-Version: 2026.10.29.1
+Version: 2026.10.30.1
 """
 import numpy as np
 import pytest
@@ -35,10 +35,13 @@ def zigzag(x0, y0, x1, y1, spacing=2.5):
 
 
 def gcode(layers, name="part_1"):
-    """layers: per layer, [(feature, polyline)]. Each polyline is one continuous extrusion."""
+    """layers: per layer, [(feature, polyline)] or (z, [(feature, polyline)]). Each polyline is one
+    continuous extrusion."""
     out = ["M83", "G90", "G1 X0 Y0 Z0.2 F6000"]
     for n, paths in enumerate(layers):
         z = round(LH * (n + 1), 4)
+        if isinstance(paths, tuple):                                    # (z, paths): a layer at its own z
+            z, paths = paths
         out += ["; CHANGE_LAYER", f"; Z_HEIGHT: {z}", f"; LAYER_HEIGHT: {LH}",
                 f"; printing object {name} id:0 copy 0", f"G1 Z{z}"]
         for feat, pts in paths:
@@ -197,3 +200,22 @@ def test_viewer_draws_flagged_red():
     assert (recs[:, 3] == red).any() and set(recs[recs[:, 3] == red, 2]) == {10}
     html = viewer.build([], np.array([[0, 0], [256, 256]], float), 256, P, summary={"unsupported": "x"}, flags=u["flags"])
     assert '"Unsupported"' in html
+
+
+def test_support_only_layers_between_part_layers():
+    # normal supports at their own layer heights: support-only layers between the part's
+    layers = []
+    for k in range(10):
+        z = round(LH * (k + 1), 4)
+        layers.append((z, rects(COLUMN) + (zigzag(40.5, 50.5, 49.5, 69.5) if k == 0 else [])))
+        layers.append((round(z + 0.13, 4), zigzag(40.5, 50.5, 49.5, 69.5)))
+    layers.append((round(LH * 11, 4), rects((40, 40, 50, 70))))
+    P = gcode(layers)
+    assert run(P)["severe_mm"] == 0
+    fil = {"filament_diameter": ["1.75"], "nozzle_temperature": ["220"], "textured_plate_temp": ["55"]}
+    r = {**resolved(), "filaments": [fil], "plate": {"name": "textured_pei", "bed_type": "Textured PEI Plate", "temp_key": "textured_plate_temp"}}
+    res = C.check_gcode(P, r, [{"name": "part_1", "filament": 1, "tri": M.box(10, 30, LH * 11) + np.array([40, 40, 0])}])
+    lay = res["checks"]["layers"]
+    assert lay["passed"], lay
+    assert lay["got"]["support_only_layers"] == 10
+

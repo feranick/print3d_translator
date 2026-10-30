@@ -1,5 +1,5 @@
 """supports.py — will the part print without supports? Two independent answers:
-Version: 2026.10.29.2
+Version: 2026.10.30.1
 
 1. From the geometry, before slicing (regions()): the part is voxelized at the real layer heights
    (vertical rays through a 0.25 mm grid, inside/outside from the mesh's crossings). On each layer,
@@ -15,7 +15,8 @@ Version: 2026.10.29.2
    Each region: area (mm2), how far it reaches beyond support (mm), its z range and centre.
 
 2. From the G-code, after slicing (unsupported()): every extrusion of the part is checked against the
-   extrusion of the layer below (and support material up to 3 layers below, for the support's top gap):
+   extrusion of the part's layer below (and support material within 4 layer heights below, for the
+   support's top gap and support printed at its own layer heights):
    a point farther than `reach` from any of it is unsupported. An unsupported stretch of a path with
    supported path on both sides, about straight between them, is a bridge: accepted (spans over
    BRIDGE_MAX listed: they sag).
@@ -266,6 +267,7 @@ def unsupported(P, line_width: float, layer_height: float, angle_deg: float, sup
         g[j - j0, i - i0] = g[j - j0 + 1, i - i0] = g[j - j0, i - i0 + 1] = g[j - j0 + 1, i - i0 + 1] = True
         return i0, j0, g
 
+    zof = {i: (l.get("z_height") or 0.0) for i, l in enumerate(P.layers)}
     layers = []                                       # (layer, segment ids, area _Mask, support _Mask)
     for a, b in zip(bounds[:-1], bounds[1:]):
         ids = order[a:b]
@@ -280,7 +282,12 @@ def unsupported(P, line_width: float, layer_height: float, angle_deg: float, sup
     floating, where = {}, {}
     for pos in range(1, len(layers)):
         L, ids, _, _ = layers[pos]
-        below = layers[pos - 1][2]
+        # below: the last layer that printed the part (normal supports may print support-only layers
+        # at their own heights in between); support: any within 4 layer heights below
+        prev = next((q for q in range(pos - 1, -1, -1) if layers[q][2] is not None), None)
+        below = layers[prev][2] if prev is not None else None
+        zc = zof.get(L, 0.0)
+        near = [q for q in range(pos - 1, -1, -1) if zc - zof.get(layers[q][0], 0.0) <= 4 * layer_height + 1e-6]
         obj = ids[np.isin(cat[ids], ["object", "other"])]
         if not len(obj):
             continue
@@ -308,7 +315,7 @@ def unsupported(P, line_width: float, layer_height: float, angle_deg: float, sup
         base = below.window(i0, j0, nyw, nxw) if below is not None else np.zeros((nyw, nxw), dtype=bool)
         d = ndimage.distance_transform_edt(~base) * res if base.any() else np.full((nyw, nxw), np.inf)
         sb = np.zeros((nyw, nxw), dtype=bool)
-        for back in range(max(0, pos - 4), pos):
+        for back in near:
             sl = layers[back][3]
             if sl is not None:
                 sb |= sl.window(i0, j0, nyw, nxw)

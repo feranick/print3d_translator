@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "print3d-translator"
-version = "2026.10.29.2"
+version = "2026.10.30.1"
 description = "Print studies (part, Bambu Lab printer, filaments, intent) to OrcaSlicer profiles, sliced and independently checked .gcode.3mf files; CLI, API and MCP server. Never talks to a printer."
 readme = "README.md"
 requires-python = ">=3.10"
