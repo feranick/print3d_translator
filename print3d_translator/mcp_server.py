@@ -1,6 +1,6 @@
 """mcp_server.py — MCP server (stdio): lets LLM-based tools turn parts into checked Bambu Lab print files
 with OrcaSlicer. It never talks to a printer.
-Version: 2026.10.29.1
+Version: 2026.10.30.2
 
 Tools (all JSON):
   study_format      the study format: printer, filaments, objects, intent, overrides. Read it first.
@@ -38,7 +38,8 @@ cantilever): enable supports ("tree") or orient the part differently, and say wh
 The file to print is files.gcode_3mf: the user prints it from the printer's SD card, Bambu Studio or Handy.
 Hints: orient 'flat' puts the largest flat face down; 'at' [x, y] fixes a part's centre; H2D filaments take
 extruder 'left'/'right'; filaments at different temperatures on one nozzle need allow_mix_temp: true;
-give each filament a color (flush volumes depend on it); "view": true (or make_view) writes a 3D view to open in a browser.
+give each filament a color (flush volumes depend on it); intent.supports "needed" slices without supports and
+again with tree supports only if something would have nothing below it (supports_decision says which and why); "view": true (or make_view) writes a 3D view to open in a browser.
 Polling costs tokens: when a run needs more than about 5 minutes, tell the user when it should finish and stop.
 Units: mm, degrees C, %, mm/s, g, s."""
 

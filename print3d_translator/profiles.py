@@ -1,7 +1,7 @@
 """profiles.py — OrcaSlicer system profiles: find them, index them, flatten them, choose the machine,
 process and filament profiles for a study, apply the intent and overrides, and write the flattened
 copies the OrcaSlicer CLI loads.
-Version: 2026.10.24.7
+Version: 2026.10.30.2
 
 Why we flatten: OrcaSlicer 2.4.2's --load-settings / --load-filaments read one JSON file and do not
 follow "inherits" (OrcaSlicer issue #14718): every key a leaf profile does not set silently falls back
@@ -55,7 +55,8 @@ PRESETS = {
     "draft": {"words": ["Draft", "Standard"], "lh": 0.6},
 }
 
-SUPPORTS = {"none": None, "auto": "normal(auto)", "tree": "tree(auto)"}
+SUPPORTS = {"none": None, "auto": "normal(auto)", "tree": "tree(auto)", "needed": None}
+NEEDED_FALLBACK = "tree"    # "needed": sliced without supports; again with these if unsupported_extrusion fails
 # filament colours when the study gives none (distinct, so flush volumes are not underestimated)
 DEFAULT_COLORS = ["#FFFFFF", "#000000", "#FF0000", "#0000FF", "#00A000", "#FFD700", "#808080", "#FF8000"]
 EXTRUDERS = {"left": 1, "right": 2}      # H2D: filament_map values (extruder_printable_area[0] is the left one)
@@ -389,7 +390,7 @@ def apply_intent(process: dict, machine: dict, intent: dict, nozzle: float, chan
     if sup is not None:
         if sup not in SUPPORTS:
             raise ProfileError(f"intent.supports '{sup}': choose one of {list(SUPPORTS)}")
-        _set(process, "enable_support", sup != "none", changes, "process")
+        _set(process, "enable_support", sup not in ("none", "needed"), changes, "process")
         if SUPPORTS[sup]:
             _set(process, "support_type", SUPPORTS[sup], changes, "process")
     brim = intent.get("brim")

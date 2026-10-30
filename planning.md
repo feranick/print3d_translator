@@ -1,7 +1,7 @@
 # print3d_translator: planning
 
 Session context. A new chat starts with "Read planning.md and start."
-Status: **complete end to end, 2026.10.30.1 (support detection), verified on the Mac through MCP; S4 done against OrcaSlicer's GUI** (2026-10-29); see "State log".
+Status: **complete end to end, 2026.10.30.2 (support detection, supports "needed"), verified on the Mac through MCP; S4 done against OrcaSlicer's GUI** (2026-10-29); see "State log".
 
 ## Decisions (2026-10-24)
 
@@ -437,5 +437,10 @@ One study = one plate. JSON, `{name: study}`. Units: mm, °C, %, mm/s.
     - `unsupported_extrusion` compared part layers with support-only layers (51 m of false "floating");
     - fixed in both checks; test_support_only_layers_between_part_layers.
   - `tools/support_corpus.py`: all current runs consistent (old cradle plates fail; bikeholder 10-29-2, vacuum inlets, kf16, tray clean).
-  - Open: `supports: "needed"` (slice without, re-slice with tree only if unsupported_extrusion fails); per-object supports; enforcers from flagged regions (tree(manual)) need painted 3MF input. Both of the last two need a CLI spike.
+  - Open: per-object supports; enforcers from flagged regions (tree(manual)) need painted 3MF input. Both of the last two need a CLI spike.
+- 2026-10-30: **2026.10.30.2: `intent.supports: "needed"`.** `runner.run_study` slices with supports none (result written as `<name>.without_supports.json`, so that `status` does not take it as final). If `unsupported_extrusion` fails:
+  - The archive, G-code and view move to `no_supports/` with their result.
+  - The plate is sliced again with `profiles.NEEDED_FALLBACK` ("tree").
+  - `supports_decision` = {used, why, without_supports {result, severe_mm}, support_cost {filament_g, time_s}, seconds_without}.
+  - Otherwise `used: none`. `validate` doubles the time estimate. fake_orca mode `overhang` (walls inset 6 mm except the top 2 layers; support lines when enabled); `test_supports_needed`. 183 tests pass.
 

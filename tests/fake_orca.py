@@ -3,6 +3,8 @@
 the settings files the translator wrote, and writes Bambu-style G-code and a .gcode.3mf whose
 extrusion volume, layers, temperatures and placement follow those settings. FAKE_ORCA_MODE:
   ok (default) | fail17 (exit -17) | crash (killed by a signal) | shift (parts printed 6 mm off) | hot (+20 C nozzle)
+  | overhang (each part's walls inset 6 mm except its top 2 layers, which hang over; with enable_support,
+    support lines under them)
   | sleep (never ends, for timeouts and cancel)
 Version: 2026.10.24.7
 """
@@ -116,9 +118,17 @@ def main(argv):
             nlay = sum(1 for zz in zs if zz <= o["hi"][2] + 1e-6)
             e_layer = o["model"] / nlay / area_f
             (x0, y0), (x1, y1) = o["lo"][:2] + ow / 2, o["hi"][:2] - ow / 2
+            L += [f"; printing object {o['name']} id:{o['id']} copy 0", f"G1 Z{z}"]
+            if mode == "overhang" and z < o["hi"][2] - 2 * lh + 1e-6:
+                if str(first(process.get("enable_support"), 0)).lower() in ("1", "true", "1.0"):
+                    L += ["; FEATURE: Support", f"G1 X{x0:.3f} Y{y0:.3f}"]
+                    yy, up = y0, True
+                    while yy <= y1 + 1e-9:
+                        L += [f"G1 X{(x1 if up else x0):.3f} Y{yy:.3f} E0.02", f"G1 Y{min(yy + 2.0, y1):.3f}"]
+                        yy, up = yy + 2.0, not up
+                x0, y0, x1, y1 = x0 + 6, y0 + 6, x1 - 6, y1 - 6
             per = 2 * ((x1 - x0) + (y1 - y0))
-            L += [f"; printing object {o['name']} id:{o['id']} copy 0", f"G1 Z{z}", "; FEATURE: Outer wall",
-                  f"G1 X{x0:.3f} Y{y0:.3f}"]
+            L += ["; FEATURE: Outer wall", f"G1 X{x0:.3f} Y{y0:.3f}"]
             for (px, py, seg) in ((x1, y0, x1 - x0), (x1, y1, y1 - y0), (x0, y1, x1 - x0), (x0, y0, y1 - y0)):
                 L.append(f"G1 X{px:.3f} Y{py:.3f} E{e_layer * seg / per:.5f}")
             used[cur] += e_layer

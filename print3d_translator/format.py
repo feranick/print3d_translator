@@ -1,5 +1,5 @@
 """format.py — the study format (study_format) and static validation (validate): no slicing.
-Version: 2026.10.24.10
+Version: 2026.10.30.2
 
 A study is one plate: a Bambu Lab printer, its filaments, the objects on the plate and the intent.
 Validation checks keys, types, files and (when OrcaSlicer's profiles are found) resolves the
@@ -58,7 +58,8 @@ def study_format(status: dict | None = None) -> dict:
                        "layer_height": "mm", "first_layer_height": "mm", "walls": "wall loops",
                        "top_layers": "n", "bottom_layers": "n", "infill": "%", "infill_pattern":
                        "gyroid|grid|cubic|rectilinear|honeycomb|lightning|crosshatch|...",
-                       "supports": "none|auto|tree", "support_angle": "degrees from horizontal (overhangs flatter "
+                       "supports": "none|auto|tree|needed (sliced without supports; again with tree supports only if "
+                                   "something has nothing below it)", "support_angle": "degrees from horizontal (overhangs flatter "
                        "than this get support)", "brim": "none|auto|<width mm>", "seam": "aligned|back|nearest|random"},
             "overrides": "{process: {key: value}, machine: {...}, filament: {'all' | '1' | '2': {...}}}: raw "
                          "OrcaSlicer keys (validated against OrcaSlicer's own keys)",
@@ -214,7 +215,8 @@ def validate_study(st, base_dir: str | Path | None = None, vendor: P.Vendor | No
                 warnings += r["warnings"]
             except P.ProfileError as e:
                 errors.append(str(e))
-    estimate = {"minutes": round(0.5 + 0.2 * n_parts, 1), "procs": 1, "mem_mb": 1500} if not errors else None
+    passes = 2 if isinstance(st.get("intent"), dict) and st["intent"].get("supports") == "needed" else 1  # at most two slices
+    estimate = {"minutes": round((0.5 + 0.2 * n_parts) * passes, 1), "procs": 1, "mem_mb": 1500} if not errors else None
     return {"ok": not errors, "errors": errors, "warnings": warnings, "estimate": estimate}
 
 

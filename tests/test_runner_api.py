@@ -1,6 +1,6 @@
 """End-to-end tests of format.py, runner.py, api.py, cli.py and mcp_server.py with a fake OrcaSlicer
 (tests/fake_orca.py) and the hand-written profile tree; and one real run when OrcaSlicer is installed.
-Version: 2026.10.24.10
+Version: 2026.10.30.2
 """
 import json
 import os
@@ -101,6 +101,26 @@ def test_run_study_reliable_with_files(fake):
     assert "OrcaSlicer: fake_warning" in res["warnings"]
     saved = json.loads((fake / "s" / "s.json").read_text())
     assert saved["reliable"] and json.loads((fake / "s" / "state.json").read_text())["state"] == "done"
+
+
+def test_supports_needed(fake, monkeypatch):
+    cube = [{"name": "cube", "part": {"stl": str(fake / "cube.stl")}}]
+    # the part prints without supports: one slice, no supports
+    res = R.run_study("n", p2s(fake, objects=cube, intent={"supports": "needed"}), fake / "n")
+    assert res["reliable"] and res["supports_decision"]["used"] == "none", (res.get("why"), res.get("unreliable_because"))
+    assert not (fake / "n" / "no_supports").exists()
+    # the part overhangs: sliced again with tree supports, the first slice kept in no_supports/
+    monkeypatch.setenv("FAKE_ORCA_MODE", "overhang")
+    plain = R.run_study("o", p2s(fake, objects=cube, intent={"supports": "none"}), fake / "o")
+    assert not plain["reliable"] and not plain["checks"]["unsupported_extrusion"]["passed"]
+    res = R.run_study("h", p2s(fake, objects=cube, intent={"supports": "needed"}), fake / "h")
+    d = res["supports_decision"]
+    assert res["reliable"], res.get("unreliable_because")
+    assert d["used"] == "tree" and "without supports: z" in d["why"] and d["without_supports"]["severe_mm"] > 5
+    first = json.loads(Path(d["without_supports"]["result"]).read_text())
+    assert not first["reliable"] and Path(first["files"]["gcode_3mf"]).parent.name == "no_supports"
+    assert json.loads((fake / "h" / "h.json").read_text())["supports_decision"]["used"] == "tree"
+    assert res["profiles"]["set"]["process.support_type"][1] == "tree(auto)"
 
 
 def test_run_study_h2d_tower_and_map(fake):

@@ -1,7 +1,7 @@
 """runner.py — one study end to end: validate, resolve profiles, load / orient / check / place the parts,
 write the flattened profiles, STLs and assemble list, run OrcaSlicer, fill in the archive's printer id,
 check everything independently, and write <name>.json (atomically).
-Version: 2026.10.29.2
+Version: 2026.10.30.2
 
 Study folder <name>/:
   profiles/          machine.json, process.json, filament_<i>.json (flattened copies; never the installed ones)
@@ -10,6 +10,7 @@ Study folder <name>/:
   slice/             OrcaSlicer's output folder: plate.gcode.3mf, plate_1.gcode, orca.log, command.json
   <name>.gcode.3mf   the file to print (printer_model_id filled in), <name>.gcode
   state.json         progress (preparing, slicing, checking, done)
+  no_supports/       (intent.supports "needed", when supports were needed) the slice without them
   <name>.json        the result
   cancel             (written by cancel) stops OrcaSlicer
 """
@@ -203,6 +204,56 @@ def prepare(name: str, study: dict, folder: Path, base_dir=None, exe: str | None
 # ---------------------------------------------------------------- the whole study
 
 def run_study(name: str, study: dict, folder: str | Path, base_dir=None) -> dict:
+    """One study. intent.supports "needed": sliced without supports first; if unsupported_extrusion fails,
+    that result moves to <folder>/no_supports/ and the study is sliced again with tree supports.
+    The result's supports_decision says which was kept and why."""
+    if (study.get("intent") or {}).get("supports") != "needed":
+        return _run_once(name, study, folder, base_dir)
+    folder = Path(folder)
+    plain = {**study, "intent": {**study["intent"], "supports": "none"}}
+    tmp = folder / f"{name}.without_supports.json"         # not <name>.json: status would take it as final
+    first = _run_once(name, plain, folder, base_dir, result=tmp)
+    tmp.unlink(missing_ok=True)
+    ch = (first.get("checks") or {}).get("unsupported_extrusion")
+    if not first.get("ok") or not ch or ch.get("passed"):
+        first["supports_decision"] = {"mode": "needed", "used": "none",
+                                      "why": "nothing has to be held up" if ch and ch.get("passed") else
+                                      "not decided: the plate did not slice or was not checked"}
+        write_json(folder / f"{name}.json", first)
+        return first
+    if (folder / "cancel").exists():
+        write_json(folder / f"{name}.json", first)
+        return first
+    _state(folder, "slicing again with supports", why="; ".join(ch.get("problems", [])[:2]))
+    keep = folder / "no_supports"
+    if keep.exists():
+        shutil.rmtree(keep)
+    keep.mkdir()
+    for f in (f"{name}.gcode.3mf", f"{name}.gcode", f"{name}.view.html"):
+        if (folder / f).exists():
+            shutil.move(str(folder / f), str(keep / f))
+    moved = {k: str(keep / Path(v).name) for k, v in (first.get("files") or {}).items()
+             if isinstance(v, str) and (keep / Path(v).name).exists()}
+    first["files"] = {**(first.get("files") or {}), **moved}
+    first["note"] = "the slice without supports; profiles/, objects/ and slice/ of the folder above are the second slice's"
+    write_json(keep / f"{name}.json", first)
+    tmp2 = folder / f"{name}.with_supports.json"
+    second = _run_once(name, {**study, "intent": {**study["intent"], "supports": P.NEEDED_FALLBACK}}, folder, base_dir,
+                       result=tmp2)
+    tmp2.unlink(missing_ok=True)
+    e1, e2 = first.get("estimate") or {}, second.get("estimate") or {}
+    second["supports_decision"] = {
+        "mode": "needed", "used": P.NEEDED_FALLBACK,
+        "why": "without supports: " + "; ".join(ch.get("problems", [])[:3]),
+        "without_supports": {"result": str(keep / f"{name}.json"), "severe_mm": (ch.get("got") or {}).get("severe_mm")},
+        "support_cost": {"filament_g": round((e2.get("filament_g") or 0) - (e1.get("filament_g") or 0), 2),
+                         "time_s": round((e2.get("time_s") or 0) - (e1.get("time_s") or 0), 0)},
+        "seconds_without": (first.get("seconds") or {}).get("total")}
+    write_json(folder / f"{name}.json", second)
+    return second
+
+
+def _run_once(name: str, study: dict, folder: str | Path, base_dir=None, result: Path | None = None) -> dict:
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     t0 = time.monotonic()
@@ -326,7 +377,7 @@ def run_study(name: str, study: dict, folder: str | Path, base_dir=None) -> dict
         res["seconds"] = seconds
         res["execution"] = {"host": os.uname().nodename if hasattr(os, "uname") else None,
                             "orca": orca.find_orca(), "timeout_s": timeout_of(study)}
-        write_json(folder / f"{name}.json", res)
+        write_json(result or folder / f"{name}.json", res)
         _state(folder, "done", ok=res["ok"], reliable=res["reliable"])
     return res
 

@@ -88,7 +88,7 @@ Settings, read from the environment:
 | `printer` | `model` (H2D, H2S, P2S), `nozzle` (mm), `plate`: `textured_pei` (default), `smooth_pei`, `engineering`, `high_temp`, `supertack`. Cool plates are refused where the printer does not support them. |
 | `filaments` | `{profile}` or `{type, brand, variant}`, `color` (`#RRGGBB`), `extruder` (`left`/`right`/`auto`, H2D). Filament n is position n. |
 | `objects` | `{name, part, filament, orient, copies, at}`. `part`: `{step}`, `{stl}`, `{3mf}`, `{goal}` or `{b3dt: {step, volume}}`. `orient`: `as_is`, `flat` (largest flat area down), or `{rotate: [rx, ry, rz]}` in degrees (X, then Y, then Z). `at`: a fixed centre `[x, y]`. |
-| `intent` | `preset` (`fine`, `standard`, `strength`, `draft`) or `process` (an exact name); `layer_height`, `first_layer_height`, `walls`, `top_layers`, `bottom_layers`, `infill`, `infill_pattern`, `supports` (`none`/`auto`/`tree`), `support_angle`, `brim` (`none`/`auto`/mm), `seam`. |
+| `intent` | `preset` (`fine`, `standard`, `strength`, `draft`) or `process` (an exact name); `layer_height`, `first_layer_height`, `walls`, `top_layers`, `bottom_layers`, `infill`, `infill_pattern`, `supports` (`none`/`auto`/`tree`/`needed`), `support_angle`, `brim` (`none`/`auto`/mm), `seam`. |
 | `overrides` | raw OrcaSlicer keys: `{process: {...}, machine: {...}, filament: {"all"/"1"/...: {...}}}`. They are checked against OrcaSlicer's keys and types. |
 | `allow_mix_temp` | `true`: allow filaments outside each other's temperature range on one nozzle (one bed temperature for all) |
 | `expect` | `[{quantity: dotted result path, value, tol (relative, default 0.05)}]` |
@@ -104,6 +104,7 @@ Settings, read from the environment:
 
 | Key | Content |
 |---|---|
+| `supports_decision` | (`supports: "needed"`) `used` (`none` or `tree`), `why` (what had nothing below it without supports), `without_supports` (that slice's result, kept in `no_supports/`), `support_cost` (extra g and s) |
 | `ok`, `reliable`, `unreliable_because`, `warnings` | whether it sliced, whether every hard check passed (if not, do not print it), and the soft findings (OrcaSlicer's own warnings, unsupported regions, long bridges, thin walls, bed contact, shared nozzle, hot bed) |
 | `files` | `gcode_3mf` (the file to print), `gcode`, `profiles` (the flattened copies), `log`, `command` |
 | `estimate` | `time_s`, `time`, `filament_g`, `filament_m`, `by_filament`: OrcaSlicer's numbers, checked against ours |
@@ -301,6 +302,7 @@ OrcaSlicer's profiles are AGPL-3.0, so they are read from the installed OrcaSlic
 
 | Version | Changes |
 |---|---|
+| 2026.10.30.2 | `intent.supports: "needed"`: slices without supports, and again with tree supports only if `unsupported_extrusion` fails. The first slice is kept in `no_supports/`; `supports_decision` in the result. fake_orca mode `overhang`. |
 | 2026.10.30.1 | Normal supports print support-only layers at their own heights (`independent_support_layer_height`): `layers` counts them apart, `unsupported_extrusion` compares with the part's previous layer plus support within 4 layer heights (was: 51 m of false "mid-air" on the cradle with normal supports). `tools/support_corpus.py` scans finished studies. |
 | 2026.10.29.2 | Support messages: "more than N mm" when the distance passes the computed window; pre-slice warnings name what they found; chamfer slivers left out of `unsupported_regions`. Checked on the Mac through MCP (cradle: none and flat unreliable, tree reliable). |
 | 2026.10.29.1 | Support detection (`supports.py`): hard check `unsupported_extrusion` on the slice, soft `long_bridges`; `unsupported_regions` replaces `overhang` before slicing; unsupported toolpaths drawn red in the 3D view; `examples/cradle.stl`. |
