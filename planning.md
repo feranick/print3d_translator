@@ -507,3 +507,4 @@ One study = one plate. JSON, `{name: study}`. Units: mm, °C, %, mm/s.
   - MCP status: 2.5.0, matches pin, profiles_version 02.08.00.16 = installed 2.8.0.16.
   - Cabin C3 colour change + pause through MCP: reliable (run_20261111_140121_b54ae3).
   - b3dt: null in the MCP status was never caused by the config change. The MCP server runs from the project's .venv (Python 3.12: build123d 0.13.0, no build123d-translator); the shell's python has it. Fix: install it into .venv. 2026.11.11.7: status shows 'python' and a b3dt_hint.
+- 2026-11-11: **b3dt goals through MCP (2026.11.11.7, OrcaSlicer 2.5.0).** build123d-translator 2026.10.28.1 installed in .venv. The s4_bracket goal was built inside the run (volume 49069.832 mm³ from b3dt, matching the earlier STEP chain's 49069.8): reliable, 20.7 g, 43 min; supports 'needed' → none (run_20261111_140950_a1cfce).
