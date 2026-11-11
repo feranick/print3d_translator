@@ -1,7 +1,7 @@
 """runner.py — one study end to end: validate, resolve profiles, load / orient / check / place the parts,
 write the flattened profiles, STLs and assemble list, run OrcaSlicer, fill in the archive's printer id,
 check everything independently, and write <name>.json (atomically).
-Version: 2026.11.11.5
+Version: 2026.11.11.6
 
 Study folder <name>/:
   profiles/          machine.json, process.json, filament_<i>.json (flattened copies; never the installed ones)
@@ -94,7 +94,7 @@ def prepare(name: str, study: dict, folder: Path, base_dir=None, exe: str | None
     folder.mkdir(parents=True, exist_ok=True)
     exe = exe or orca.find_orca()
     if not exe:
-        raise ValueError("OrcaSlicer not found: install OrcaSlicer 2.4.2, or set P3DT_ORCA to its executable")
+        raise ValueError(f"OrcaSlicer not found: install OrcaSlicer {orca.PINNED}, or set P3DT_ORCA to its executable")
     prof = P.find_profiles(exe)
     if not prof:
         opc = P.compiled_profiles_only(exe)
@@ -104,6 +104,10 @@ def prepare(name: str, study: dict, folder: Path, base_dir=None, exe: str | None
                              f"same version (resources/profiles of its source tag; see README 'OrcaSlicer versions')")
         raise ValueError(f"OrcaSlicer's profiles not found next to {exe}: set P3DT_ORCA_PROFILES to its resources/profiles")
     vendor = P.Vendor(prof)
+    pv = P.profile_versions(exe, prof)
+    profile_note = [] if pv["match"] is not False else [
+        f"the profiles read ({prof}, vendor version {pv['read']}) are not the ones this OrcaSlicer ships ({pv['installed']}): "
+        f"update the JSON profiles in P3DT_ORCA_PROFILES to OrcaSlicer {orca.version(exe)}'s source tag"]
     v = F.validate_study(study, base_dir, vendor)
     if not v["ok"]:
         raise ValueError("; ".join(v["errors"]))
@@ -112,7 +116,7 @@ def prepare(name: str, study: dict, folder: Path, base_dir=None, exe: str | None
         write_json(folder / "expanded_study.json", study)
     r = P.resolve(vendor, study)
     F.mix_temperature(study, r)
-    warnings = list(dict.fromkeys(r["warnings"] + v["warnings"]))
+    warnings = list(dict.fromkeys(profile_note + r["warnings"] + v["warnings"]))
     machine, process = r["machine"], r["process"]
     n_fil = len(r["filaments"])
     layout = {"overlap": "footprint", "gap": 6.0, "brims_may_overlap": False, **(study.get("layout") or {})}

@@ -497,3 +497,8 @@ One study = one plate. JSON, `{name: study}`. Units: mm, °C, %, mm/s.
     - A350 plate 1: the same findings and accepts, 442.46 vs 442.55 g, 13h20 vs 13h25.
   - Differences come from Bambu's newer vendor profiles (02.08 vs 02.01): sparse_infill_pattern grid vs crosshatch; a smaller H2D prime tower.
   - Switching needs the JSON profile tree (the 2.5 app ships BBL.opc only): P3DT_ORCA_PROFILES set for the MCP server and the shell, and `tools/orca_keys.py ... 2.5.0 --pinned` plus the pinned version in orca.py if 2.5.0 becomes the pin.
+- 2026-11-11: **2026.11.11.6: pinned to OrcaSlicer 2.5.0.**
+  - data/orca_keys.json = 2.5.0 (995 keys); data/orca_keys-2.4.2.json kept.
+  - profiles.profile_versions compares the JSON tree's BBL.json version with the installed one (BBL.json, or the version string in BBL.opc's header): shown in status, and a run warning on mismatch.
+  - User setup: OrcaSlicer 2.5.0 as /Applications/OrcaSlicer.app; P3DT_ORCA_PROFILES in the shell and the MCP env.
+

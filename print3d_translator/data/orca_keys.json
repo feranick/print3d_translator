@@ -1,5 +1,5 @@
 {
-"orca_version": "2.4.2",
+"orca_version": "2.5.0",
 "source": "src/libslic3r/PrintConfig.cpp",
 "keys": {
 "absolute_correction": {
@@ -28,6 +28,32 @@
 "adaptive_bed_mesh_margin": {
 "type": "Float"
 },
+"adaptive_infill_gradient": {
+"type": "Enum",
+"enum": [
+"linear",
+"quadratic",
+"exponential"
+]
+},
+"adaptive_infill_interior_density": {
+"type": "Percent",
+"min": 1.0,
+"max": 100.0
+},
+"adaptive_infill_mode": {
+"type": "Enum",
+"enum": [
+"disabled",
+"distance_warp",
+"smooth_blend",
+"stepped_shells",
+"lobes",
+"normal_z",
+"normal_y",
+"normal_x"
+]
+},
 "adaptive_layer_height": {
 "type": "Bool"
 },
@@ -55,6 +81,9 @@
 "max": 1000.0
 },
 "align_infill_direction_to_model": {
+"type": "Bool"
+},
+"align_to_y_axis": {
 "type": "Bool"
 },
 "align_xy": {
@@ -109,6 +138,17 @@
 "bed_exclude_area": {
 "type": "Points"
 },
+"bed_exclude_volume_mode": {
+"type": "Enum",
+"enum": [
+"shared",
+"toolhead_offset",
+"per_extruder"
+]
+},
+"bed_exclude_volumes": {
+"type": "String"
+},
 "bed_mesh_max": {
 "type": "Point"
 },
@@ -129,6 +169,46 @@
 "before_layer_change_gcode": {
 "type": "String"
 },
+"belt_frame_tilt_angle": {
+"type": "Float",
+"min": -89.9,
+"max": 89.9
+},
+"belt_frame_tilt_decouple": {
+"type": "Bool"
+},
+"belt_printer": {
+"type": "Bool"
+},
+"belt_printer_infinite_y": {
+"type": "Bool"
+},
+"belt_purge_tower_object": {
+"type": "Bool"
+},
+"belt_purge_tower_width": {
+"type": "Float",
+"min": 1.0
+},
+"belt_slice_rotation": {
+"type": "Enum",
+"enum": [
+"none",
+"x",
+"y",
+"z"
+]
+},
+"belt_slice_rotation_angle": {
+"type": "Float",
+"min": -180.0,
+"max": 180.0
+},
+"belt_support_floor_offset": {
+"type": "Float",
+"min": -500.0,
+"max": 500.0
+},
 "best_object_pos": {
 "type": "Point"
 },
@@ -143,6 +223,15 @@
 "bottle_weight": {
 "type": "Float",
 "min": 0.0
+},
+"bottom_color_penetration_layers": {
+"type": "Int",
+"min": 0.0
+},
+"bottom_layer_direction": {
+"type": "Float",
+"min": -1.0,
+"max": 360.0
 },
 "bottom_shell_layers": {
 "type": "Int",
@@ -165,6 +254,14 @@
 "bottom_surface_filament_id": {
 "type": "Int",
 "min": 0.0
+},
+"bottom_surface_fill_order": {
+"type": "Enum",
+"enum": [
+"default",
+"outward",
+"inward"
+]
 },
 "bottom_surface_pattern": {
 "type": "Enum",
@@ -194,13 +291,14 @@
 "tpmsfk",
 "gyroid",
 "concentric",
+"spiralinset",
 "hilbertcurve",
 "archimedeanchords",
 "octagramspiral"
 ]
 },
 "bridge_acceleration": {
-"type": "FloatOrPercent",
+"type": "FloatsOrPercents",
 "min": 0.0
 },
 "bridge_angle": {
@@ -227,7 +325,7 @@
 "type": "Bool"
 },
 "bridge_speed": {
-"type": "Float",
+"type": "Floats",
 "min": 1.0
 },
 "brim_ears": {
@@ -241,6 +339,9 @@
 "type": "Float",
 "min": 0.0,
 "max": 180.0
+},
+"brim_ears_outer_only": {
+"type": "Bool"
 },
 "brim_flow_ratio": {
 "type": "Float",
@@ -261,7 +362,8 @@
 "outer_and_inner",
 "auto_brim",
 "brim_ears",
-"painted"
+"painted",
+"leading_edge_only"
 ]
 },
 "brim_use_efc_outline": {
@@ -272,11 +374,29 @@
 "min": 0.0,
 "max": 100.0
 },
+"build_plate_tilt_x": {
+"type": "Float",
+"min": -89.0,
+"max": 89.0
+},
+"build_plate_tilt_y": {
+"type": "Float",
+"min": -89.0,
+"max": 89.0
+},
 "calib_flowrate_topinfill_special_order": {
 "type": "Bool"
 },
 "center": {
 "type": "Point"
+},
+"center_of_surface_pattern": {
+"type": "Enum",
+"enum": [
+"each_surface",
+"each_model",
+"each_assembly"
+]
 },
 "chamber_minimal_temperature": {
 "type": "Ints",
@@ -352,6 +472,9 @@
 "min": 0.0,
 "max": 120.0
 },
+"cooling_filter_enabled": {
+"type": "Bool"
+},
 "cooling_tube_length": {
 "type": "Float",
 "min": 0.0
@@ -412,7 +535,7 @@
 "min": 0.0
 },
 "default_acceleration": {
-"type": "Float",
+"type": "Floats",
 "min": 0.0
 },
 "default_bed_type": {
@@ -425,17 +548,21 @@
 "type": "Strings"
 },
 "default_jerk": {
-"type": "Float",
+"type": "Floats",
 "min": 0.0
 },
 "default_junction_deviation": {
-"type": "Float"
+"type": "Floats"
 },
 "default_nozzle_volume_type": {
 "type": "Enums",
 "enum": [
 "Standard",
-"High Flow"
+"High Flow",
+"TPU High Flow",
+"Hybrid",
+"E3D High Flow",
+"Extra High Flow"
 ]
 },
 "default_print_profile": {
@@ -446,6 +573,9 @@
 },
 "default_sla_print_profile": {
 "type": "String"
+},
+"deretract_speed_extruder_change": {
+"type": "Floats"
 },
 "deretraction_speed": {
 "type": "Floats"
@@ -556,6 +686,14 @@
 "type": "Bool"
 },
 "enable_arc_fitting": {
+"type": "Enum",
+"enum": [
+"disabled",
+"enabled",
+"sparse_infill"
+]
+},
+"enable_belt_purge_tower": {
 "type": "Bool"
 },
 "enable_extra_bridge_layer": {
@@ -576,11 +714,14 @@
 "enable_long_retraction_when_cut": {
 "type": "Int"
 },
+"enable_mixed_color_sublayer": {
+"type": "Bool"
+},
 "enable_overhang_bridge_fan": {
 "type": "Bools"
 },
 "enable_overhang_speed": {
-"type": "Bool"
+"type": "Bools"
 },
 "enable_power_loss_recovery": {
 "type": "Enum",
@@ -589,6 +730,9 @@
 "enable",
 "disable"
 ]
+},
+"enable_pre_heating": {
+"type": "Bool"
 },
 "enable_pressure_advance": {
 "type": "Bools"
@@ -641,6 +785,11 @@
 "exclude_object": {
 "type": "Bool"
 },
+"exclude_object_tolerance": {
+"type": "Float",
+"min": 0.0,
+"max": 5.0
+},
 "export_3mf": {
 "type": "String"
 },
@@ -662,6 +811,9 @@
 "export_slicedata": {
 "type": "String"
 },
+"export_statistics": {
+"type": "Bool"
+},
 "export_stl": {
 "type": "Bool"
 },
@@ -674,6 +826,11 @@
 "exposure_time": {
 "type": "Float",
 "min": 0.0
+},
+"extra_brim_width": {
+"type": "Float",
+"min": 0.0,
+"max": 100.0
 },
 "extra_loading_move": {
 "type": "Float"
@@ -703,6 +860,13 @@
 "extruder_ams_count": {
 "type": "Strings"
 },
+"extruder_bed_exclude_volumes": {
+"type": "Strings"
+},
+"extruder_clearance_dist_to_rod": {
+"type": "Float",
+"min": 0.0
+},
 "extruder_clearance_height_to_lid": {
 "type": "Float",
 "min": 0.0
@@ -717,6 +881,26 @@
 },
 "extruder_colour": {
 "type": "Strings"
+},
+"extruder_max_nozzle_count": {
+"type": "Ints"
+},
+"extruder_nozzle_count": {
+"type": "Ints"
+},
+"extruder_nozzle_stats": {
+"type": "Strings"
+},
+"extruder_nozzle_volume_type": {
+"type": "Enums",
+"enum": [
+"Standard",
+"High Flow",
+"TPU High Flow",
+"Hybrid",
+"E3D High Flow",
+"Extra High Flow"
+]
 },
 "extruder_offset": {
 "type": "Points"
@@ -742,6 +926,9 @@
 "extrusion_rate_smoothing_external_perimeter_only": {
 "type": "Bool"
 },
+"extrusion_role": {
+"type": "String"
+},
 "faded_layers": {
 "type": "Int",
 "min": 3.0,
@@ -751,6 +938,15 @@
 "type": "Floats",
 "min": 0.0,
 "max": 1000.0
+},
+"fan_direction": {
+"type": "Enum",
+"enum": [
+"undefine",
+"left",
+"right",
+"both"
+]
 },
 "fan_kickstart": {
 "type": "Float",
@@ -772,6 +968,9 @@
 "fan_speedup_time": {
 "type": "Float"
 },
+"farthest_point_timelapse": {
+"type": "Bool"
+},
 "fast_tilt_time": {
 "type": "Float",
 "min": 0.0
@@ -787,6 +986,10 @@
 "type": "Strings"
 },
 "filament_change_length": {
+"type": "Floats",
+"min": 0.0
+},
+"filament_change_length_nc": {
 "type": "Floats",
 "min": 0.0
 },
@@ -820,12 +1023,39 @@
 "type": "Floats",
 "min": 0.0
 },
+"filament_dev_ams_drying_ams_limitations": {
+"type": "Strings"
+},
+"filament_dev_ams_drying_heat_distortion_temperature": {
+"type": "Floats"
+},
+"filament_dev_ams_drying_temperature": {
+"type": "Floats"
+},
+"filament_dev_ams_drying_time": {
+"type": "Floats"
+},
+"filament_dev_chamber_drying_bed_temperature": {
+"type": "Floats"
+},
+"filament_dev_chamber_drying_time": {
+"type": "Floats"
+},
+"filament_dev_drying_cooling_temperature": {
+"type": "Floats"
+},
+"filament_dev_drying_softening_temperature": {
+"type": "Floats"
+},
 "filament_diameter": {
 "type": "Floats",
 "min": 0.0
 },
 "filament_end_gcode": {
 "type": "Strings"
+},
+"filament_extruder_compatibility": {
+"type": "Ints"
 },
 "filament_extruder_id": {
 "type": "Ints"
@@ -839,6 +1069,10 @@
 "max": 2.0
 },
 "filament_flush_temp": {
+"type": "Ints",
+"min": 0.0
+},
+"filament_flush_temp_fast": {
 "type": "Ints",
 "min": 0.0
 },
@@ -869,6 +1103,9 @@
 "type": "Floats",
 "min": 1.0
 },
+"filament_is_mixed": {
+"type": "Bools"
+},
 "filament_is_support": {
 "type": "Bools"
 },
@@ -883,13 +1120,20 @@
 "filament_map": {
 "type": "Ints"
 },
+"filament_map_2": {
+"type": "Ints"
+},
 "filament_map_mode": {
 "type": "Enum",
 "enum": [
 "Auto For Flush",
 "Auto For Match",
-"Manual"
+"Manual",
+"Nozzle Manual"
 ]
+},
+"filament_max_temperature_drop_when_ec": {
+"type": "Floats"
 },
 "filament_max_volumetric_speed": {
 "type": "Floats",
@@ -898,6 +1142,24 @@
 "filament_minimal_purge_on_wipe_tower": {
 "type": "Floats",
 "min": 0.0
+},
+"filament_mixed_components": {
+"type": "Strings"
+},
+"filament_mixed_gradient": {
+"type": "Bools"
+},
+"filament_mixed_gradient_curve": {
+"type": "Strings"
+},
+"filament_mixed_gradient_per_part": {
+"type": "Bools"
+},
+"filament_mixed_gradient_range": {
+"type": "Strings"
+},
+"filament_mixed_sublayer_ratios": {
+"type": "Strings"
 },
 "filament_multi_colour": {
 "type": "Strings"
@@ -916,14 +1178,59 @@
 "filament_notes": {
 "type": "Strings"
 },
+"filament_nozzle_map": {
+"type": "Ints"
+},
+"filament_pre_cooling_temperature": {
+"type": "Ints",
+"min": 0.0
+},
+"filament_pre_cooling_temperature_nc": {
+"type": "Ints",
+"min": 0.0
+},
+"filament_preheat_temperature_delta": {
+"type": "Floats"
+},
 "filament_preset": {
 "type": "String"
+},
+"filament_prime_volume": {
+"type": "Floats",
+"min": 1.0
+},
+"filament_prime_volume_nc": {
+"type": "Floats",
+"min": 1.0
 },
 "filament_printable": {
 "type": "Ints"
 },
 "filament_ramming_parameters": {
 "type": "Strings"
+},
+"filament_ramming_travel_time": {
+"type": "Floats",
+"min": 0.0
+},
+"filament_ramming_travel_time_nc": {
+"type": "Floats",
+"min": 0.0
+},
+"filament_ramming_volumetric_speed": {
+"type": "Floats",
+"min": -1.0,
+"max": 200.0
+},
+"filament_ramming_volumetric_speed_nc": {
+"type": "Floats",
+"min": -1.0,
+"max": 200.0
+},
+"filament_retract_length_nc": {
+"type": "Floats",
+"min": 0.0,
+"max": 18.0
 },
 "filament_self_index": {
 "type": "Ints"
@@ -993,6 +1300,9 @@
 "filament_vendor": {
 "type": "Strings"
 },
+"filament_volume_map": {
+"type": "Ints"
+},
 "file_start_gcode": {
 "type": "String"
 },
@@ -1054,6 +1364,9 @@
 "type": "Bool"
 },
 "flush_multiplier": {
+"type": "Floats"
+},
+"flush_multiplier_fast": {
 "type": "Floats"
 },
 "flush_volumes_matrix": {
@@ -1153,7 +1466,7 @@
 ]
 },
 "gap_infill_speed": {
-"type": "Float",
+"type": "Floats",
 "min": 1.0
 },
 "gcode_add_line_number": {
@@ -1183,6 +1496,9 @@
 "gcode_label_objects": {
 "type": "Bool"
 },
+"gcode_skip_config_block": {
+"type": "Bool"
+},
 "gcodeviewer": {
 "type": "Bool"
 },
@@ -1190,7 +1506,22 @@
 "type": "Floats",
 "min": 0.0
 },
+"ground_face_normal": {
+"type": "String"
+},
+"ground_face_point": {
+"type": "String"
+},
+"ground_largest_face": {
+"type": "Bool"
+},
+"group_algo_with_time": {
+"type": "Bool"
+},
 "gyroid_optimized": {
+"type": "Bool"
+},
+"handle_hotend_as_extruder": {
 "type": "Bool"
 },
 "has_filament_switcher": {
@@ -1221,8 +1552,15 @@
 "high_current_on_filament_swap": {
 "type": "Bool"
 },
+"high_precision_gcode": {
+"type": "Bool"
+},
 "hole_to_polyhole": {
 "type": "Bool"
+},
+"hole_to_polyhole_max_edges": {
+"type": "Int",
+"min": 3.0
 },
 "hole_to_polyhole_threshold": {
 "type": "FloatOrPercent"
@@ -1256,6 +1594,7 @@
 "octoprint",
 "crealityprint",
 "duet",
+"ultimaker",
 "flashair",
 "astrobox",
 "repetier",
@@ -1278,6 +1617,12 @@
 "type": "Ints",
 "max": 300.0
 },
+"hotend_cooling_rate": {
+"type": "Floats"
+},
+"hotend_heating_rate": {
+"type": "Floats"
+},
 "hour": {
 "type": "Int"
 },
@@ -1287,6 +1632,65 @@
 },
 "ignore_nonexistent_config": {
 "type": "Bool"
+},
+"imex_carriage_margin": {
+"type": "Float",
+"min": 0.0,
+"max": 200.0
+},
+"imex_firmware_managed_zones": {
+"type": "Bool"
+},
+"imex_gantry_count": {
+"type": "Int",
+"min": 1.0,
+"max": 2.0
+},
+"imex_head_filament_map": {
+"type": "String"
+},
+"imex_mode_active_tools": {
+"type": "Strings"
+},
+"imex_mode_gcodes": {
+"type": "Strings"
+},
+"imex_mode_names": {
+"type": "Strings"
+},
+"imex_nozzle_clearance_x": {
+"type": "Float",
+"min": 0.0
+},
+"imex_nozzle_clearance_y": {
+"type": "Float",
+"min": 0.0
+},
+"imex_parallel_mode": {
+"type": "String"
+},
+"imex_tool_layout": {
+"type": "Enum",
+"enum": [
+"front-left",
+"front-right",
+"rear-left",
+"rear-right"
+]
+},
+"imex_tools_per_gantry": {
+"type": "Int",
+"min": 1.0,
+"max": 4.0
+},
+"imex_viz_theme": {
+"type": "Enum",
+"enum": [
+"standard",
+"deuteranopia",
+"tritanopia",
+"high_contrast"
+]
 },
 "independent_support_layer_height": {
 "type": "Bool"
@@ -1304,13 +1708,16 @@
 "type": "FloatOrPercent",
 "min": 0.0
 },
+"infill_complete_top": {
+"type": "Bool"
+},
 "infill_direction": {
 "type": "Float",
 "min": 0.0,
 "max": 360.0
 },
 "infill_jerk": {
-"type": "Float",
+"type": "Floats",
 "min": 0.0
 },
 "infill_lock_depth": {
@@ -1351,19 +1758,24 @@
 "type": "String"
 },
 "initial_layer_acceleration": {
-"type": "Float",
+"type": "Floats",
 "min": 0.0
+},
+"initial_layer_fan_speed": {
+"type": "Ints",
+"min": -1.0,
+"max": 100.0
 },
 "initial_layer_height": {
 "type": "Float",
 "min": 0.0
 },
 "initial_layer_infill_speed": {
-"type": "Float",
+"type": "Floats",
 "min": 1.0
 },
 "initial_layer_jerk": {
-"type": "Float",
+"type": "Floats",
 "min": 0.0
 },
 "initial_layer_line_width": {
@@ -1380,26 +1792,26 @@
 "min": 0.0
 },
 "initial_layer_speed": {
-"type": "Float",
+"type": "Floats",
 "min": 1.0
 },
 "initial_layer_travel_acceleration": {
-"type": "FloatOrPercent",
+"type": "FloatsOrPercents",
 "min": 0.0
 },
 "initial_layer_travel_jerk": {
-"type": "FloatOrPercent",
+"type": "FloatsOrPercents",
 "min": 0.0
 },
 "initial_layer_travel_speed": {
-"type": "FloatOrPercent",
+"type": "FloatsOrPercents",
 "min": 1.0
 },
 "initial_tool": {
 "type": "Int"
 },
 "inner_wall_acceleration": {
-"type": "Float",
+"type": "Floats",
 "min": 0.0
 },
 "inner_wall_filament_id": {
@@ -1412,7 +1824,7 @@
 "max": 2.0
 },
 "inner_wall_jerk": {
-"type": "Float",
+"type": "Floats",
 "min": 0.0
 },
 "inner_wall_line_width": {
@@ -1421,7 +1833,7 @@
 "max": 1000.0
 },
 "inner_wall_speed": {
-"type": "Float",
+"type": "Floats",
 "min": 1.0
 },
 "input_filename_base": {
@@ -1467,6 +1879,12 @@
 "DAA",
 "Disable"
 ]
+},
+"inspect_mesh": {
+"type": "Bool"
+},
+"inspect_paint": {
+"type": "Bool"
 },
 "interface_shells": {
 "type": "Bool"
@@ -1516,7 +1934,7 @@
 "max": 2.0
 },
 "internal_bridge_speed": {
-"type": "FloatOrPercent",
+"type": "FloatsOrPercents",
 "min": 1.0
 },
 "internal_solid_filament_id": {
@@ -1524,7 +1942,7 @@
 "min": 0.0
 },
 "internal_solid_infill_acceleration": {
-"type": "FloatOrPercent",
+"type": "FloatsOrPercents",
 "min": 0.0
 },
 "internal_solid_infill_flow_ratio": {
@@ -1565,13 +1983,14 @@
 "tpmsfk",
 "gyroid",
 "concentric",
+"spiralinset",
 "hilbertcurve",
 "archimedeanchords",
 "octagramspiral"
 ]
 },
 "internal_solid_infill_speed": {
-"type": "Float",
+"type": "Floats",
 "min": 1.0
 },
 "ironing_angle": {
@@ -1630,6 +2049,7 @@
 "tpmsfk",
 "gyroid",
 "concentric",
+"spiralinset",
 "hilbertcurve",
 "archimedeanchords",
 "octagramspiral"
@@ -1656,8 +2076,14 @@
 "is_extruder_used": {
 "type": "Bools"
 },
+"is_imex": {
+"type": "Bool"
+},
 "is_infill_first": {
 "type": "Bool"
+},
+"last_extrusion_role": {
+"type": "String"
 },
 "lateral_lattice_angle_1": {
 "type": "Float",
@@ -1681,6 +2107,11 @@
 },
 "layer_z": {
 "type": "Float"
+},
+"leading_brim_length": {
+"type": "Float",
+"min": 0.0,
+"max": 100.0
 },
 "lightning_overhang_angle": {
 "type": "Float",
@@ -1727,7 +2158,7 @@
 "type": "Strings"
 },
 "logfile": {
-"type": "Int"
+"type": "String"
 },
 "long_retractions_when_cut": {
 "type": "Bools"
@@ -1735,8 +2166,16 @@
 "long_retractions_when_ec": {
 "type": "Bools"
 },
+"machine_bed_mass_Y": {
+"type": "Float",
+"min": 0.0
+},
 "machine_end_gcode": {
 "type": "String"
+},
+"machine_hotend_change_time": {
+"type": "Float",
+"min": 0.0
 },
 "machine_load_filament_time": {
 "type": "Float",
@@ -1754,8 +2193,16 @@
 "type": "Floats",
 "min": 0.0
 },
+"machine_max_force_Y": {
+"type": "Float",
+"min": 0.0
+},
 "machine_max_junction_deviation": {
 "type": "Floats"
+},
+"machine_max_printed_mass": {
+"type": "Float",
+"min": 0.0
 },
 "machine_min_extruding_rate": {
 "type": "Floats",
@@ -1767,6 +2214,9 @@
 },
 "machine_pause_gcode": {
 "type": "String"
+},
+"machine_prepare_compensation_time": {
+"type": "Float"
 },
 "machine_start_gcode": {
 "type": "String"
@@ -2006,7 +2456,11 @@
 "type": "Enums",
 "enum": [
 "Standard",
-"High Flow"
+"High Flow",
+"TPU High Flow",
+"Hybrid",
+"E3D High Flow",
+"Extra High Flow"
 ]
 },
 "num_extruders": {
@@ -2049,7 +2503,7 @@
 ]
 },
 "outer_wall_acceleration": {
-"type": "Float",
+"type": "Floats",
 "min": 0.0
 },
 "outer_wall_filament_id": {
@@ -2062,7 +2516,7 @@
 "max": 2.0
 },
 "outer_wall_jerk": {
-"type": "Float",
+"type": "Floats",
 "min": 0.0
 },
 "outer_wall_line_width": {
@@ -2071,7 +2525,7 @@
 "max": 1000.0
 },
 "outer_wall_speed": {
-"type": "Float",
+"type": "Floats",
 "min": 1.0
 },
 "output": {
@@ -2081,19 +2535,19 @@
 "type": "String"
 },
 "overhang_1_4_speed": {
-"type": "FloatOrPercent",
+"type": "FloatsOrPercents",
 "min": 0.0
 },
 "overhang_2_4_speed": {
-"type": "FloatOrPercent",
+"type": "FloatsOrPercents",
 "min": 0.0
 },
 "overhang_3_4_speed": {
-"type": "FloatOrPercent",
+"type": "FloatsOrPercents",
 "min": 0.0
 },
 "overhang_4_4_speed": {
-"type": "FloatOrPercent",
+"type": "FloatsOrPercents",
 "min": 0.0
 },
 "overhang_fan_speed": {
@@ -2210,6 +2664,9 @@
 "pipe": {
 "type": "String"
 },
+"plugins": {
+"type": "Strings"
+},
 "position": {
 "type": "Floats"
 },
@@ -2272,6 +2729,14 @@
 "type": "Float",
 "min": 1.0
 },
+"prime_volume_mode": {
+"type": "Enum",
+"enum": [
+"Default",
+"Saving",
+"Fast"
+]
+},
 "print_bed_max": {
 "type": "Floats"
 },
@@ -2303,7 +2768,9 @@
 "type": "Enum",
 "enum": [
 "default",
-"as_obj_list"
+"as_obj_list",
+"best_of",
+"snake"
 ]
 },
 "print_preset": {
@@ -2322,7 +2789,19 @@
 "print_time": {
 "type": "String"
 },
+"print_time_day": {
+"type": "String"
+},
+"print_time_hour": {
+"type": "String"
+},
+"print_time_minute": {
+"type": "String"
+},
 "print_time_sec": {
+"type": "String"
+},
+"print_time_total_sec": {
 "type": "String"
 },
 "printable_area": {
@@ -2479,6 +2958,9 @@
 "resonance_avoidance": {
 "type": "Bool"
 },
+"retract_after_wipe": {
+"type": "Percents"
+},
 "retract_before_wipe": {
 "type": "Percents"
 },
@@ -2612,10 +3094,10 @@
 "second": {
 "type": "Int"
 },
-"set_other_flow_ratios": {
+"separated_infills": {
 "type": "Bool"
 },
-"silent_mode": {
+"set_other_flow_ratios": {
 "type": "Bool"
 },
 "silent_print_time": {
@@ -2713,6 +3195,9 @@
 "close_holes"
 ]
 },
+"slicing_pipeline_plugin": {
+"type": "Strings"
+},
 "slow_down_for_layer_cooling": {
 "type": "Bools"
 },
@@ -2734,7 +3219,7 @@
 "min": 0.0
 },
 "slowdown_for_curled_perimeters": {
-"type": "Bool"
+"type": "Bools"
 },
 "small_area_infill_flow_compensation": {
 "type": "Bool"
@@ -2743,11 +3228,19 @@
 "type": "Strings"
 },
 "small_perimeter_speed": {
-"type": "FloatOrPercent",
+"type": "FloatsOrPercents",
 "min": 1.0
 },
 "small_perimeter_threshold": {
-"type": "Float",
+"type": "Floats",
+"min": 0.0
+},
+"small_support_perimeter_speed": {
+"type": "FloatsOrPercents",
+"min": 1.0
+},
+"small_support_perimeter_threshold": {
+"type": "Floats",
 "min": 0.0
 },
 "solid_infill_direction": {
@@ -2762,7 +3255,7 @@
 "type": "Bool"
 },
 "sparse_infill_acceleration": {
-"type": "FloatOrPercent",
+"type": "FloatsOrPercents",
 "min": 0.0
 },
 "sparse_infill_density": {
@@ -2812,6 +3305,7 @@
 "tpmsfk",
 "gyroid",
 "concentric",
+"spiralinset",
 "hilbertcurve",
 "archimedeanchords",
 "octagramspiral"
@@ -2820,8 +3314,13 @@
 "sparse_infill_rotate_template": {
 "type": "String"
 },
+"sparse_infill_smooth_factor": {
+"type": "Percent",
+"min": 0.0,
+"max": 100.0
+},
 "sparse_infill_speed": {
-"type": "Float",
+"type": "Floats",
 "min": 1.0
 },
 "spiral_finishing_flow_ratio": {
@@ -2856,6 +3355,9 @@
 },
 "start_end_points": {
 "type": "Points"
+},
+"strict": {
+"type": "Bool"
 },
 "supertack_plate_temp": {
 "type": "Ints",
@@ -2918,6 +3420,9 @@
 "support_chamber_temp_control": {
 "type": "Bool"
 },
+"support_cooling_filter": {
+"type": "Bool"
+},
 "support_critical_angle": {
 "type": "Float",
 "min": 0.0,
@@ -2928,6 +3433,9 @@
 },
 "support_expansion": {
 "type": "Float"
+},
+"support_fast_purge_mode": {
+"type": "Bool"
 },
 "support_filament": {
 "type": "Int",
@@ -2976,6 +3484,7 @@
 "auto",
 "rectilinear",
 "concentric",
+"spiralinset",
 "rectilinear_interlaced",
 "grid"
 ]
@@ -2985,7 +3494,7 @@
 "min": 0.0
 },
 "support_interface_speed": {
-"type": "Float",
+"type": "Floats",
 "min": 1.0
 },
 "support_interface_top_layers": {
@@ -3028,6 +3537,7 @@
 "tpmsfk",
 "gyroid",
 "concentric",
+"spiralinset",
 "hilbertcurve",
 "archimedeanchords",
 "octagramspiral"
@@ -3123,7 +3633,7 @@
 "max": 100.0
 },
 "support_speed": {
-"type": "Float",
+"type": "Floats",
 "min": 1.0
 },
 "support_style": {
@@ -3236,8 +3746,30 @@
 "tool_change_on_wipe_tower": {
 "type": "Bool"
 },
+"toolchange_cyclic_first_layer": {
+"type": "Bool"
+},
+"toolchange_cyclic_order": {
+"type": "String"
+},
+"toolchange_ordering": {
+"type": "Enum",
+"enum": [
+"default",
+"cyclic"
+]
+},
 "top_bottom_infill_wall_overlap": {
 "type": "Percent"
+},
+"top_color_penetration_layers": {
+"type": "Int",
+"min": 0.0
+},
+"top_layer_direction": {
+"type": "Float",
+"min": -1.0,
+"max": 360.0
 },
 "top_shell_layers": {
 "type": "Int",
@@ -3248,12 +3780,12 @@
 "min": 0.0
 },
 "top_solid_infill_flow_ratio": {
-"type": "Float",
+"type": "Floats",
 "min": 0.0,
 "max": 2.0
 },
 "top_surface_acceleration": {
-"type": "Float",
+"type": "Floats",
 "min": 0.0
 },
 "top_surface_density": {
@@ -3261,12 +3793,37 @@
 "min": 0.0,
 "max": 100.0
 },
+"top_surface_expansion": {
+"type": "Float",
+"min": 0.0
+},
+"top_surface_expansion_direction": {
+"type": "Enum",
+"enum": [
+"inward_and_outward",
+"inward",
+"outward"
+]
+},
+"top_surface_expansion_margin": {
+"type": "Float",
+"min": 0.0,
+"max": 10.0
+},
 "top_surface_filament_id": {
 "type": "Int",
 "min": 0.0
 },
+"top_surface_fill_order": {
+"type": "Enum",
+"enum": [
+"default",
+"outward",
+"inward"
+]
+},
 "top_surface_jerk": {
-"type": "Float",
+"type": "Floats",
 "min": 0.0
 },
 "top_surface_line_width": {
@@ -3302,13 +3859,14 @@
 "tpmsfk",
 "gyroid",
 "concentric",
+"spiralinset",
 "hilbertcurve",
 "archimedeanchords",
 "octagramspiral"
 ]
 },
 "top_surface_speed": {
-"type": "Float",
+"type": "Floats",
 "min": 1.0
 },
 "total_cost": {
@@ -3330,11 +3888,11 @@
 "type": "Float"
 },
 "travel_acceleration": {
-"type": "Float",
+"type": "Floats",
 "min": 0.0
 },
 "travel_jerk": {
-"type": "Float",
+"type": "Floats",
 "min": 0.0
 },
 "travel_slope": {
@@ -3343,11 +3901,11 @@
 "max": 90.0
 },
 "travel_speed": {
-"type": "Float",
+"type": "Floats",
 "min": 1.0
 },
 "travel_speed_z": {
-"type": "Float",
+"type": "Floats",
 "min": 0.0
 },
 "tree_support_angle_slow": {
@@ -3412,6 +3970,9 @@
 "tree_support_with_infill": {
 "type": "Bool"
 },
+"unsupported_wall_last": {
+"type": "Bool"
+},
 "uptodate": {
 "type": "Bool"
 },
@@ -3441,6 +4002,9 @@
 },
 "volumetric_speed_coefficients": {
 "type": "Strings"
+},
+"wait_for_temp_on_wipe_tower": {
+"type": "Bool"
 },
 "wall_direction": {
 "type": "Enum",
@@ -3503,6 +4067,14 @@
 "type": "Floats",
 "min": 0.0
 },
+"wipe_inward": {
+"type": "Bool"
+},
+"wipe_inward_distance": {
+"type": "FloatOrPercent",
+"min": 0.0,
+"max": 100.0
+},
 "wipe_on_loops": {
 "type": "Bool"
 },
@@ -3553,6 +4125,9 @@
 },
 "wipe_tower_rotation_angle": {
 "type": "Float"
+},
+"wipe_tower_sparse_layers_combination": {
+"type": "Bool"
 },
 "wipe_tower_type": {
 "type": "Enum",

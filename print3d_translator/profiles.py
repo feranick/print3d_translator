@@ -1,7 +1,7 @@
 """profiles.py — OrcaSlicer system profiles: find them, index them, flatten them, choose the machine,
 process and filament profiles for a study, apply the intent and overrides, and write the flattened
 copies the OrcaSlicer CLI loads.
-Version: 2026.11.11.5
+Version: 2026.11.11.6
 
 Why we flatten: OrcaSlicer 2.4.2's --load-settings / --load-filaments read one JSON file and do not
 follow "inherits" (OrcaSlicer issue #14718): every key a leaf profile does not set silently falls back
@@ -121,6 +121,39 @@ def _orca_keys(version: str | None) -> dict:
     d = Path(__file__).with_name("data")
     p = d / f"orca_keys-{version}.json" if version else None
     return json.loads((p if p and p.is_file() else d / "orca_keys.json").read_text())
+
+
+def _vtuple(v) -> tuple | None:
+    m = re.findall(r"\d+", str(v or ""))
+    return tuple(int(x) for x in m[:4]) if len(m) >= 4 else None
+
+
+def profile_versions(orca_exe: str | None, prof: Path | None) -> dict:
+    """The vendor profile version the translator reads (prof/BBL.json) and the one the OrcaSlicer install
+    ships (its BBL.json, or the version inside its compiled BBL.opc); 'match' is False when they differ
+    (OrcaSlicer updated, but not the JSON profiles in P3DT_ORCA_PROFILES)."""
+    out = {"read": None, "installed": None, "match": None}
+    try:
+        out["read"] = json.loads((Path(prof) / f"{VENDOR}.json").read_text()).get("version") if prof else None
+    except (OSError, ValueError):
+        pass
+    for d in (profile_dir_candidates(orca_exe) if orca_exe else []):
+        if os.environ.get("P3DT_ORCA_PROFILES") and d == Path(os.environ["P3DT_ORCA_PROFILES"]).expanduser():
+            continue
+        try:
+            if (d / f"{VENDOR}.json").is_file():
+                out["installed"] = json.loads((d / f"{VENDOR}.json").read_text()).get("version")
+                break
+            if (d / f"{VENDOR}.opc").is_file():
+                head = (d / f"{VENDOR}.opc").read_bytes()[:256]
+                m = re.search(rb"(\d+\.\d+\.\d+\.\d+)", head)
+                out["installed"] = m.group(1).decode() if m else None
+                break
+        except OSError:
+            continue
+    a, b = _vtuple(out["read"]), _vtuple(out["installed"])
+    out["match"] = (a == b) if a and b else None
+    return out
 
 
 def compiled_profiles_only(orca_exe: str | None) -> Path | None:

@@ -410,7 +410,7 @@ def validate_study(st, base_dir: str | Path | None = None, vendor: P.Vendor | No
     if not errors:
         if vendor is None:
             warnings.append("OrcaSlicer's profiles were not found here: printer, filament and setting names "
-                            "are not checked (install OrcaSlicer 2.4.2 or set P3DT_ORCA_PROFILES)")
+                            "are not checked (install OrcaSlicer, or set P3DT_ORCA_PROFILES)")
         else:
             try:
                 r = P.resolve(vendor, st)

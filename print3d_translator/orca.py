@@ -1,6 +1,6 @@
 """orca.py — the OrcaSlicer command line: find it, tell its version, build the command, run it in its
 own process group with a timeout and a cancel flag, and decode its exit status.
-Version: 2026.11.11.1
+Version: 2026.11.11.6
 
 The translator never asks OrcaSlicer to do anything but slice files: no printer, network or cloud
 options are ever passed. Geometry comes in through an assemble list (--load-assemble-list): one STL
@@ -19,7 +19,7 @@ import time
 from functools import lru_cache
 from pathlib import Path
 
-PINNED = "2.4.2"
+PINNED = "2.5.0"
 
 # OrcaSlicer 2.4.2 src/libslic3r/Utils.hpp; the process exit status is the code mod 256
 EXIT_CODES = {
@@ -98,12 +98,19 @@ def status() -> dict:
     from . import profiles
     exe = find_orca()
     if not exe:
-        return {"error": "OrcaSlicer not found: install OrcaSlicer 2.4.2, or set P3DT_ORCA to its executable",
+        return {"error": f"OrcaSlicer not found: install OrcaSlicer {PINNED}, or set P3DT_ORCA to its executable",
                 "pinned": PINNED}
     v = version(exe)
     prof = profiles.find_profiles(exe)
-    return {"exe": exe, "version": v, "pinned": PINNED, "matches": v == PINNED,
-            "profiles": str(prof) if prof else None}
+    out = {"exe": exe, "version": v, "pinned": PINNED, "matches": v == PINNED,
+           "profiles": str(prof) if prof else None}
+    pv = profiles.profile_versions(exe, prof)
+    if pv["installed"] and pv["read"]:
+        out["profiles_version"] = {"read": pv["read"], "installed": pv["installed"], "match": pv["match"]}
+    elif not prof and profiles.compiled_profiles_only(exe):
+        out["profiles_error"] = (f"this OrcaSlicer ships compiled profiles only: set P3DT_ORCA_PROFILES to the JSON "
+                                 f"profiles of OrcaSlicer {v} (README 'OrcaSlicer versions')")
+    return out
 
 
 def decode(returncode: int) -> dict:
