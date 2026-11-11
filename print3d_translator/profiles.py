@@ -1,7 +1,7 @@
 """profiles.py — OrcaSlicer system profiles: find them, index them, flatten them, choose the machine,
 process and filament profiles for a study, apply the intent and overrides, and write the flattened
 copies the OrcaSlicer CLI loads.
-Version: 2026.11.11.2
+Version: 2026.11.11.3
 
 Why we flatten: OrcaSlicer 2.4.2's --load-settings / --load-filaments read one JSON file and do not
 follow "inherits" (OrcaSlicer issue #14718): every key a leaf profile does not set silently falls back
@@ -84,6 +84,7 @@ def profile_dir_candidates(orca_exe: str | None = None) -> list[Path]:
         out += [exe.parent / "resources" / "profiles",          # extracted AppImage (squashfs-root)
                 exe.parent.parent / "resources" / "profiles",   # squashfs-root/bin/orca-slicer
                 exe.parent.parent / "share" / "OrcaSlicer" / "resources" / "profiles"]
+        return out                                  # a known OrcaSlicer uses its own profiles, never another install's
     out += [Path("/Applications/OrcaSlicer.app/Contents/Resources/profiles"),
             Path.home() / "Applications/OrcaSlicer.app/Contents/Resources/profiles",
             Path("/var/lib/flatpak/app/io.github.softfever.OrcaSlicer/current/active/files/share/OrcaSlicer/resources/profiles"),
