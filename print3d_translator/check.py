@@ -1,7 +1,7 @@
 """check.py — independent checks of a sliced plate: the G-code (as gcode.py reads it) against the study,
 our flattened profiles and the placed geometry. Nothing here trusts OrcaSlicer's own summary; its
 estimates are only compared with ours.
-Version: 2026.11.11.1
+Version: 2026.11.11.2
 
 Each check is {passed, hard, why, got, expected, ...}. A failed hard check makes the result
 unreliable. The checks:
@@ -43,7 +43,6 @@ TOL_XY = 0.05           # mm, bounds
 SUPPORT_MARGIN = 5.0    # mm beyond the silhouette that supports may reach
 AUTO_BRIM_MAX = 10.0    # mm, allowance for brim_type auto_brim (assumption; see README)
 SEVERE_MAX = 5.0        # mm of extrusion more than 1 mm beyond support (noise allowance)
-SLIVER_AREA = 1.0       # mm2: a top thinner than this cross-section is not printed by the slicer (reported)
 
 
 def _c(passed: bool, why: str, hard: bool = True, **kw) -> dict:
@@ -127,21 +126,26 @@ class Footprint:
         return out
 
 
-def section_area_above(tri: np.ndarray, z: float, res: float = 0.05, levels: int = 6) -> float:
-    """The largest cross-section (mm2) of the mesh between z and its top, at a few heights."""
+def section_width(tri: np.ndarray, z: float, res: float = 0.05) -> float:
+    """The widest feature (mm: twice the largest inscribed radius) of the mesh's cross-section at z;
+    0 when the mesh does not reach z."""
+    from scipy.ndimage import distance_transform_edt
     from .supports import voxelize
-    top = float(tri[:, :, 2].max())
-    if z >= top:
+    if z >= float(tri[:, :, 2].max()):
         return 0.0
-    above = tri[tri[:, :, 2].max(axis=1) > z]
-    lo, hi = above[:, :, :2].reshape(-1, 2).min(axis=0), above[:, :, :2].reshape(-1, 2).max(axis=0)
-    # inside / outside along vertical rays needs every triangle of those columns, below z too
+    cross = tri[(tri[:, :, 2].max(axis=1) > z)]
+    lo, hi = cross[:, :, :2].reshape(-1, 2).min(axis=0), cross[:, :, :2].reshape(-1, 2).max(axis=0)
     txy_lo, txy_hi = tri[:, :, :2].min(axis=1), tri[:, :, :2].max(axis=1)
     keep = tri[np.all(txy_hi >= lo, axis=1) & np.all(txy_lo <= hi, axis=1)]
-    res = max(res, float(np.max(hi - lo)) / 1500)
-    zs = np.linspace(z, top - 1e-3, levels) if top - z > 2e-3 else np.array([z])
-    occ, _ = voxelize(keep, zs, res)
-    return float(occ.reshape(len(zs), -1).sum(axis=1).max() * res * res) if occ.size else 0.0
+    res = max(res, float(np.max(hi - lo)) / 2000)
+    occ, (ox, oy) = voxelize(keep, np.array([z]), res)
+    # inside / outside is right only in the columns whose triangles were all kept: [lo, hi]
+    i0, i1 = int(np.floor((lo[0] - ox) / res)), int(np.ceil((hi[0] - ox) / res)) + 1
+    j0, j1 = int(np.floor((lo[1] - oy) / res)), int(np.ceil((hi[1] - oy) / res)) + 1
+    win = occ[0, max(j0, 0):j1, max(i0, 0):i1]
+    if not win.any():
+        return 0.0
+    return float(2 * distance_transform_edt(np.pad(win, 1)).max() * res)
 
 
 def sample(seg: np.ndarray, step: float = 1.0) -> tuple[np.ndarray, np.ndarray]:
@@ -264,9 +268,11 @@ def check_gcode(P: G.Parsed, resolved: dict, objects: list[dict], tower_bbox: li
         top = float(zk[-1]) if len(zk) else None
         top_ok = top is not None and abs(top - H) <= lh_k / 2 + TOL_Z
         if top is not None and not top_ok and top < H:
-            area = section_area_above(o["tri"], top + lh_k / 2)
-            if area <= SLIVER_AREA:
-                slivers[o["name"]] = {"not_printed_mm": round(H - top, 3), "max_section_mm2": round(area, 3)}
+            lw_k = max(_f(opv(k)("outer_wall_line_width"), 0.42), _f(opv(k)("line_width"), 0.42))
+            width = section_width(o["tri"], top + lh_k / 2)
+            if width < lw_k:                    # the next layer would be thinner than a line: not printable
+                slivers[o["name"]] = {"not_printed_mm": round(H - top, 3), "next_layer_width_mm": round(width, 3),
+                                      "line_width_mm": lw_k}
                 top_ok = True
         n_exp = 1 + max(0, int(math.floor(((top if top_ok and top is not None else H) - h1) / lh_k + 0.5)))
         count_ok = len(zk) > 0 and abs(len(zk) - n_exp) <= 1
@@ -278,8 +284,8 @@ def check_gcode(P: G.Parsed, resolved: dict, objects: list[dict], tower_bbox: li
     plate_ok = len(zl) == len(P.layers) - len(sup_only) and (P.header.get("layers") in (None, len(P.layers)))
     checks["layers"] = _c(layers_ok and plate_ok,
                           "per object: first layer, then its layer_height, its top at its height (+- half a layer; a "
-                          f"sliver of at most {SLIVER_AREA:g} mm2 cross-section above the last layer is reported, not "
-                          "failed); the plate's layer markers match",
+                          "top thinner than a line above the last layer, which the slicer cannot print, is reported "
+                          "in top_slivers, not failed); the plate's layer markers match",
                           got={"levels": int(len(zl)), "layer_markers": len(P.layers), "support_only_layers": len(sup_only),
                                "header": P.header.get("layers"), "first": float(zl[0]) if len(zl) else None,
                                "top": float(zl[-1]) if len(zl) else None, "by_object": per_layers,
@@ -288,8 +294,8 @@ def check_gcode(P: G.Parsed, resolved: dict, objects: list[dict], tower_bbox: li
     if slivers:
         checks["top_slivers"] = _c(False, "the top of these objects is thinner than a printable layer and is not printed "
                                           "(trim it, or accept it)", hard=False, got=slivers,
-                                   problems=[f"{n}: top {v['not_printed_mm']} mm not printed (cross-section at most "
-                                             f"{v['max_section_mm2']} mm2)" for n, v in slivers.items()])
+                                   problems=[f"{n}: top {v['not_printed_mm']} mm not printed (the next layer would be "
+                                             f"{v['next_layer_width_mm']} mm wide, less than a line)" for n, v in slivers.items()])
 
     # first_layer
     on_first = {}
@@ -552,13 +558,20 @@ def _footprint(objects, seg, info, printing, obj_of_seg, cats, vol, pv, opv, tow
         d_any = np.minimum(d_any, d)
         own = obj_of_seg[sel] == k
         d_own[own] = d[own]
-    use = np.where(obj_of_seg[sel] >= 0, d_own, d_any)
+    # support: the nearest object (OrcaSlicer may print several objects' supports in one object's block)
+    use = np.where((obj_of_seg[sel] >= 0) & (cats[sel] != "support"), d_own, d_any)
     lim = np.array([(per_obj[k] if k >= 0 else allow).get(c, allow["object"]) for k, c in zip(obj_of_seg[sel], cats[sel])])
     out = use > lim
     by_cat = {}
     for c in np.unique(cats[sel][out]) if out.any() else []:
         mm = out & (cats[sel] == c)
-        by_cat[str(c)] = {"points": int(mm.sum()), "max_distance_mm": round(float(use[mm].max()), 2)}
+        fin = use[mm][np.isfinite(use[mm])]
+        by_cat[str(c)] = {"points": int(mm.sum()), "max_distance_mm": round(float(fin.max()), 2) if len(fin) else
+                          "more than 30 mm from every object"}
+    # support spreading past the margin (tall tree supports lean out) is reported, not failed: it is no
+    # placement error, and OrcaSlicer stops (-101) if it reaches another part
+    sup_far = out & (cats[sel] == "support")
+    out = out & (cats[sel] != "support")
     vol_out = float(vol[np.unique(sel[out])].sum()) if out.any() else 0.0
     tower = {}
     mt = printing & (cats == "tower")
@@ -580,7 +593,9 @@ def _footprint(objects, seg, info, printing, obj_of_seg, cats, vol, pv, opv, tow
     passed = (not out.any() or vol_out <= 0.5) and tower.get("passed", True)
     return _c(passed, "no extrusion outside its allowed region (object silhouette + half a line; + brim; "
                       "+ support margin; the prime tower apart from the objects)",
-              got={"outside": by_cat, "volume_outside_mm3": round(vol_out, 2), "tower": tower or None},
+              got={"outside": {k: v for k, v in by_cat.items() if k != "support"}, "volume_outside_mm3": round(vol_out, 2),
+                   "tower": tower or None,
+                   **({"support_beyond_margin": by_cat.get("support")} if sup_far.any() else {})},
               expected={"allowance_mm": {k: round(v, 2) for k, v in allow.items()},
                         "brim_type": str(_first(pv("brim_type"), "auto_brim"))})
 

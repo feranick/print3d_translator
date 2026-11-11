@@ -1,7 +1,7 @@
 """profiles.py — OrcaSlicer system profiles: find them, index them, flatten them, choose the machine,
 process and filament profiles for a study, apply the intent and overrides, and write the flattened
 copies the OrcaSlicer CLI loads.
-Version: 2026.11.11.1
+Version: 2026.11.11.2
 
 Why we flatten: OrcaSlicer 2.4.2's --load-settings / --load-filaments read one JSON file and do not
 follow "inherits" (OrcaSlicer issue #14718): every key a leaf profile does not set silently falls back
@@ -548,3 +548,10 @@ def write(resolved: dict, folder: str | Path) -> dict:
         out["filaments"].append(str(p))
         out["sha256"]["filaments"].append(sha256(cfg))
     return out
+
+
+def process_keys(r: dict) -> set:
+    """Keys an object's settings may set: the process profile's, and OrcaSlicer's other keys that are not
+    machine or filament keys (OrcaSlicer defaults them, e.g. brim_type)."""
+    others = set(r["machine"]) | {k for f in r["filaments"] for k in f}
+    return set(r["process"]) | (set(orca_keys()["keys"]) - others)

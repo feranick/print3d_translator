@@ -462,3 +462,19 @@ One study = one plate. JSON, `{name: study}`. Units: mm, °C, %, mm/s.
   - **Next, on the Mac:**
     - Check that OrcaSlicer 2.4.2 names merged objects `assemble_N` in the G-code and honours height_ranges `extruder`.
     - Runs to try: cabin C2 with two colours (from its 3MF and from parts); A350 plate 1 via from_3mf with layout {gap: 0, brims_may_overlap: true, overlap: first_layer}; the fuselage plate with tree supports (should now get the conflict message, or fit with the support halo).
+- 2026-11-11: **2026.11.11.2, on the Mac through MCP.**
+  - **Confirmed:**
+    - Merged objects are named `assemble_N` in the G-code. Cabin C2 two colours, from its 3MF and from `parts`: reliable, filament 2 16.2 g.
+    - Pauses: before the layer above z, check `pauses` passes.
+    - Colour change, after one fix. OrcaSlicer 2.4.2 segfaults in layer_height_profile_from_ranges when a height range has no `layer_height`; the user's crash report showed it, and ranges now carry it. C3 white→blue at 1.2 mm with a pause at 3.0 is reliable.
+  - **A350 plate 1 via from_3mf:** keeps the original layout (gap 0, brims_may_overlap, first_layer). The fuselage plate with tree supports now slices (auto placement with the support halo; no -101).
+  - **Checker fixes from these runs:**
+    - Slivers by the next layer's width (rear fuselage knife-edge rim 0.32 mm; cockpit hatch 0.40 mm).
+    - section_width only within the kept columns.
+    - Bridge runs anchored within a line of support.
+    - "floating" only when nothing is within the margin.
+    - process_keys = profile + OrcaSlicer keys minus machine/filament.
+    - Footprint support against the nearest object.
+  - **Bulkhead ceilings:** the fuselages' internal ceilings are about 1.85 mm past the walls below, printed as Bridge + Overhang wall. They are flagged, and accepted with `accept`.
+  - **OrcaSlicer 2.5.0:** an alpha (extruder variants change the profile format). Staying on 2.4.2.
+

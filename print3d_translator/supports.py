@@ -1,5 +1,5 @@
 """supports.py — will the part print without supports? Two independent answers:
-Version: 2026.11.11.1
+Version: 2026.11.11.2
 
 1. From the geometry, before slicing (regions()): the part is voxelized at the real layer heights
    (vertical rays through a 0.25 mm grid, inside/outside from the mesh's crossings). On each layer,
@@ -365,8 +365,13 @@ def unsupported(P, line_width: float, layer_height: float, angle_deg: float, sup
         dmax = np.maximum.reduceat(np.where(bad, D, 0.0), starts)
         # a bridge: supported path on both sides, and about straight between them (a loop around an
         # overhang also leaves and comes back to supported path, but much longer than the chord)
-        anchored = same_prev[starts] & same_next[ends]
-        a0, a1 = np.maximum(starts - 1, 0), np.minimum(ends + 1, len(x) - 1)
+        # a path ending within a line of what is below is held there too (bridge lines stop half a line
+        # inside the walls they rest on)
+        near_s = ~same_prev[starts] & (D[starts] <= r + line_width)
+        near_e = ~same_next[ends] & (D[ends] <= r + line_width)
+        anchored = (same_prev[starts] | near_s) & (same_next[ends] | near_e)
+        a0 = np.where(same_prev[starts], np.maximum(starts - 1, 0), starts)
+        a1 = np.where(same_next[ends], np.minimum(ends + 1, len(x) - 1), ends)
         chord = np.hypot(x[a1] - x[a0], y[a1] - y[a0])
         bridge = anchored & (length <= STRAIGHT * chord + 1.0)
         long = bridge & (length > bridge_max)
@@ -391,7 +396,9 @@ def unsupported(P, line_width: float, layer_height: float, angle_deg: float, sup
         names = sorted({P.objects[o] for o in info[obj[np.unique(rep[sm])], 3] if 0 <= o < len(P.objects)})
         where[L] = ([round(float(x[sm].mean()), 1), round(float(y[sm].mean()), 1)], names)
         top = float(dmax[count].max())
-        loose = count & ~same_prev[starts] & ~same_next[ends]      # a whole path with nothing below
+        dmin = np.minimum.reduceat(np.where(bad, D, np.inf), starts)
+        # floating: a whole path with nothing printed below it anywhere near (within the measured margin)
+        loose = count & ~same_prev[starts] & ~same_next[ends] & ~near_s & ~near_e & (dmin >= margin - 1e-6)
         floating[L] = bool((loose & sev).any() if sev.any() else loose.any())
         out["by_layer"][L] = [round(mm, 1), round(smm, 1), round(top, 2)]
     out["unsupported_mm"] = round(total, 1)

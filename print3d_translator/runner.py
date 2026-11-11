@@ -1,7 +1,7 @@
 """runner.py — one study end to end: validate, resolve profiles, load / orient / check / place the parts,
 write the flattened profiles, STLs and assemble list, run OrcaSlicer, fill in the archive's printer id,
 check everything independently, and write <name>.json (atomically).
-Version: 2026.11.11.1
+Version: 2026.11.11.2
 
 Study folder <name>/:
   profiles/          machine.json, process.json, filament_<i>.json (flattened copies; never the installed ones)
@@ -132,6 +132,7 @@ def prepare(name: str, study: dict, folder: Path, base_dir=None, exe: str | None
         return np.array([lo, [hi[0], lo[1]], hi, [lo[0], hi[1]]]), f"area extruder(s) {exts} print"
 
     names = F.object_names(study)
+    pkeys = P.process_keys(r)
     objects, instances, hard_bad = {}, [], []
     for k, o in enumerate(study["objects"]):
         oname = names[k]
@@ -139,7 +140,7 @@ def prepare(name: str, study: dict, folder: Path, base_dir=None, exe: str | None
         counts = [len(q["tri"]) for q in parts]
         tri, rot, R = Gm.orient(np.concatenate([q["tri"] for q in parts]), o.get("orient", "as_is"))
         ptri = np.split(tri, np.cumsum(counts)[:-1])
-        settings = {kk: vv for kk, vv in (o.get("settings") or {}).items() if kk in process}
+        settings = {kk: vv for kk, vv in (o.get("settings") or {}).items() if kk in pkeys}
         oproc = {**process, **{kk: str(vv) for kk, vv in settings.items()}}
         sp = C.support_params(lambda kk, d=None: oproc.get(kk, d), nozzle)
         supports = "none" if not sp["supports"] else ("tree" if "tree" in str(C._first(oproc.get("support_type"), "")) else "auto")
@@ -207,12 +208,13 @@ def prepare(name: str, study: dict, folder: Path, base_dir=None, exe: str | None
     (folder / "objects").mkdir(exist_ok=True)
     for f_ in (folder / "objects").glob("*.stl"):
         f_.unlink()
-    ranges = _height_ranges(study)
     placed, stl_objs, assembled = [], [], {}
     n_assembled = 0
     for inst in instances:
         p = plc["placed"][inst["id"]]
         dx, dy = p["center"]
+        ranges = _height_ranges(study, float(M.bbox(p["tri"])[1][2]),
+                                _f(inst["settings"].get("layer_height"), _f(process.get("layer_height"), 0.2)))
         objects[inst["object"]]["centers"].append(p["center"])
         if len(inst["parts"]) == 1:
             stl = M.write_stl(folder / "objects" / f"{inst['id']}.stl", p["tri"], name=inst["id"])
@@ -311,13 +313,18 @@ def _conflict_why(ctx: dict, pairs: list) -> str | None:
             f"supports or brims, reach each other. They are {gap_txt} (outline to outline); {hint}.")
 
 
-def _height_ranges(study: dict) -> list[dict]:
-    """intent.color_changes -> OrcaSlicer height ranges with the filament ('extruder') from each z up."""
+def _height_ranges(study: dict, top: float = 10000.0, layer_height: float = 0.2) -> list[dict]:
+    """intent.color_changes -> OrcaSlicer height ranges with the filament ('extruder') from each z up to the
+    object's top. Each range carries its layer_height: OrcaSlicer reads it from every range (a range
+    without one crashes the 2.4.2 CLI)."""
     cc = sorted((study.get("intent") or {}).get("color_changes") or [], key=lambda c: c["z"])
     out = []
     for i, c in enumerate(cc):
-        top = cc[i + 1]["z"] if i + 1 < len(cc) else 10000.0
-        out.append({"min_z": float(c["z"]), "max_z": float(top), "range_params": {"extruder": str(int(c["filament"]))}})
+        if c["z"] >= top:
+            continue
+        hi = min(cc[i + 1]["z"], top) if i + 1 < len(cc) else top
+        out.append({"min_z": float(c["z"]), "max_z": float(round(hi + 1e-3, 4)),
+                    "range_params": {"extruder": str(int(c["filament"])), "layer_height": f"{layer_height:g}"}})
     return out
 
 

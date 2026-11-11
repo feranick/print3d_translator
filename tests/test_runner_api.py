@@ -1,6 +1,6 @@
 """End-to-end tests of format.py, runner.py, api.py, cli.py and mcp_server.py with a fake OrcaSlicer
 (tests/fake_orca.py) and the hand-written profile tree; and one real run when OrcaSlicer is installed.
-Version: 2026.11.11.1
+Version: 2026.11.11.2
 """
 import json
 import os
@@ -348,14 +348,14 @@ def test_3mf_keeps_its_part_filaments(fake):
 
 def test_from_3mf_plate_keeps_layout_and_settings(fake):
     p = bambu_3mf(fake / "proj.3mf", [
-        {"id": 2, "name": "wing.stl", "at": (60, 60), "settings": {"wall_loops": "4", "skeleton_infill_density": "5%"},
+        {"id": 2, "name": "wing.stl", "at": (60, 60), "settings": {"wall_loops": "4", "not_an_orca_key": "5"},
          "parts": [{"id": 1, "box": (40, 30, 5)}]},
         {"id": 4, "name": "tail.stl", "at": (190, 60), "parts": [{"id": 3, "box": (30, 30, 5)}]},
         {"id": 6, "name": "nose.stl", "at": (307.2 + 100, 100), "parts": [{"id": 5, "box": (20, 20, 5)}]}],
         plates=[[2, 4], [6]])
     v = F.validate({"s": p2s(fake, objects=[{"from_3mf": {"path": str(p), "plate": 1}}])}, vendor=P.Vendor(FIX))["s"]
     assert v["ok"], v["errors"]
-    assert any("skeleton_infill_density" in w for w in v["warnings"])
+    assert any("not_an_orca_key" in w for w in v["warnings"])
     res = R.run_study("p", p2s(fake, objects=[{"from_3mf": {"path": str(p), "plate": 1}}]), fake / "p")
     assert res["reliable"], res.get("unreliable_because")
     assert sorted(res["objects"]) == ["tail_4", "wing_2"]
@@ -418,7 +418,7 @@ def test_color_change_and_pause(fake):
     res = R.run_study("cc", st, fake / "cc")
     assert res["reliable"], res.get("unreliable_because")
     asm = json.loads((fake / "cc" / "assemble.json").read_text())["plates"][0]["objects"]
-    assert asm[0]["height_ranges"] == [{"min_z": 5.0, "max_z": 10000.0, "range_params": {"extruder": "2"}}]
+    assert asm[0]["height_ranges"] == [{"min_z": 5.0, "max_z": 10.001, "range_params": {"extruder": "2", "layer_height": "0.2"}}]
     assert res["checks"]["tools"]["got"]["by_object"] == {"cube_1": [1, 2]}
     assert res["checks"]["pauses"]["passed"] and res["pauses"][0]["layer_z"] == pytest.approx(3.2)
     text = Path(res["files"]["gcode"]).read_text()

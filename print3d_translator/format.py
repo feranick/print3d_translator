@@ -1,5 +1,5 @@
 """format.py — the study format (study_format) and static validation (validate): no slicing.
-Version: 2026.11.11.1
+Version: 2026.11.11.2
 
 A study is one plate: a Bambu Lab printer, its filaments, the objects on the plate and the intent.
 Validation checks keys, types, files and (when OrcaSlicer's profiles are found) resolves the
@@ -417,7 +417,7 @@ def validate_study(st, base_dir: str | Path | None = None, vendor: P.Vendor | No
                 errors += mix_temperature(st, r)
                 warnings += r["warnings"]
                 for k, o in enumerate(objs):
-                    unknown = sorted(set(o.get("settings") or {}) - set(r["process"]))
+                    unknown = sorted(set(o.get("settings") or {}) - P.process_keys(r))
                     if unknown and o.get("_settings_from_3mf"):
                         warnings.append(f"objects[{k}] ({names[k]}): 3MF settings OrcaSlicer does not have, left out: {unknown}")
                     elif unknown:
