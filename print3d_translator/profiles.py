@@ -1,7 +1,7 @@
 """profiles.py — OrcaSlicer system profiles: find them, index them, flatten them, choose the machine,
 process and filament profiles for a study, apply the intent and overrides, and write the flattened
 copies the OrcaSlicer CLI loads.
-Version: 2026.11.11.3
+Version: 2026.11.11.4
 
 Why we flatten: OrcaSlicer 2.4.2's --load-settings / --load-filaments read one JSON file and do not
 follow "inherits" (OrcaSlicer issue #14718): every key a leaf profile does not set silently falls back
@@ -106,12 +106,29 @@ def find_profiles(orca_exe: str | None = None) -> Path | None:
 
 # ---------------------------------------------------------------- OrcaSlicer's keys
 
-@lru_cache(maxsize=1)
 def orca_keys() -> dict:
-    """{key: {type, enum?, min?, max?, nullable?}} for the pinned OrcaSlicer (data/orca_keys.json,
-    made by tools/orca_keys.py from its PrintConfig.cpp)."""
-    p = Path(__file__).with_name("data") / "orca_keys.json"
-    return json.loads(p.read_text())
+    """{orca_version, source, keys: {key: {type, enum?, min?, max?, nullable?}}} for the OrcaSlicer in use:
+    data/orca_keys-<version>.json when there is one (made by tools/orca_keys.py from that version's
+    PrintConfig.cpp), else data/orca_keys.json (the pinned version)."""
+    from . import orca
+    exe = orca.find_orca()
+    return _orca_keys(orca.version(exe) if exe else None)
+
+
+@lru_cache(maxsize=4)
+def _orca_keys(version: str | None) -> dict:
+    d = Path(__file__).with_name("data")
+    p = d / f"orca_keys-{version}.json" if version else None
+    return json.loads((p if p and p.is_file() else d / "orca_keys.json").read_text())
+
+
+def compiled_profiles_only(orca_exe: str | None) -> Path | None:
+    """OrcaSlicer 2.5+ ships its vendor profiles compiled (resources/profiles/BBL.opc, no BBL.json): the
+    profiles folder that has only that, or None."""
+    for d in profile_dir_candidates(orca_exe):
+        if (d / f"{VENDOR}.opc").is_file() and not (d / f"{VENDOR}.json").is_file():
+            return d
+    return None
 
 
 def _fmt_num(v: float) -> str:

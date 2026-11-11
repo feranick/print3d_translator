@@ -97,6 +97,11 @@ def prepare(name: str, study: dict, folder: Path, base_dir=None, exe: str | None
         raise ValueError("OrcaSlicer not found: install OrcaSlicer 2.4.2, or set P3DT_ORCA to its executable")
     prof = P.find_profiles(exe)
     if not prof:
+        opc = P.compiled_profiles_only(exe)
+        if opc:
+            raise ValueError(f"this OrcaSlicer ({orca.version(exe)}) ships its profiles compiled ({opc}/{P.VENDOR}.opc), "
+                             f"which the translator does not read: set P3DT_ORCA_PROFILES to the JSON profiles of the "
+                             f"same version (resources/profiles of its source tag; see README 'OrcaSlicer versions')")
         raise ValueError(f"OrcaSlicer's profiles not found next to {exe}: set P3DT_ORCA_PROFILES to its resources/profiles")
     vendor = P.Vendor(prof)
     v = F.validate_study(study, base_dir, vendor)

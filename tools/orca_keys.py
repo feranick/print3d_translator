@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """orca_keys.py — extracts OrcaSlicer's configuration keys (name, type, enum values, min, max)
 from its source file src/libslic3r/PrintConfig.cpp into print3d_translator/data/orca_keys.json.
-Version: 2026.10.24.1
+Version: 2026.11.11.4
 
 Only the interface is kept (key names, value types, accepted enum strings, limits); no code or
 text from OrcaSlicer. Run it once per pinned OrcaSlicer version:
 
-    python3 tools/orca_keys.py /path/to/OrcaSlicer/src/libslic3r/PrintConfig.cpp 2.4.2
+    python3 tools/orca_keys.py /path/to/OrcaSlicer/src/libslic3r/PrintConfig.cpp 2.5.0
+writes data/orca_keys-2.5.0.json, used when that OrcaSlicer version runs (add --pinned to replace the
+default data/orca_keys.json instead).
 """
 from __future__ import annotations
 
@@ -46,7 +48,9 @@ def extract(text: str) -> dict:
 def main() -> None:
     src, version = Path(sys.argv[1]), sys.argv[2]
     keys = extract(src.read_text(encoding="utf-8", errors="replace"))
-    out = Path(__file__).resolve().parents[1] / "print3d_translator" / "data" / "orca_keys.json"
+    pinned = len(sys.argv) > 3 and sys.argv[3] == "--pinned"
+    name = "orca_keys.json" if pinned else f"orca_keys-{version}.json"
+    out = Path(__file__).resolve().parents[1] / "print3d_translator" / "data" / name
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({"orca_version": version, "source": "src/libslic3r/PrintConfig.cpp",
                                "keys": dict(sorted(keys.items()))}, indent=0, sort_keys=False) + "\n")

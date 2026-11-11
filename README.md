@@ -218,6 +218,22 @@ A benchmark passes when the result is reliable and its expected values hold.
 - **An auto brim is at most 10 mm wide** (`footprint`). Support beyond 5 mm of the silhouette (tall tree supports lean out by 25 mm or more) is reported in `footprint.got.support_beyond_margin`, not failed: OrcaSlicer itself stops (-101) when support reaches another part.
 - **Every filament needs a colour.** Without one, the 2.4.2 CLI crashes on 2+ filaments, so the translator always sets one.
 
+## OrcaSlicer versions
+
+The translator is pinned to OrcaSlicer 2.4.2 (`p3dt status` shows the version found and whether it matches). OrcaSlicer 2.5 ships its vendor profiles compiled into one binary file per vendor (`resources/profiles/BBL.opc`); the translator reads the JSON profiles instead. To try 2.5.0 beside 2.4.2:
+
+```bash
+cd ~/Software
+git clone --depth 1 --branch v2.5.0 --filter=blob:none --no-checkout https://github.com/OrcaSlicer/OrcaSlicer.git orca-2.5.0-src
+cd orca-2.5.0-src
+git sparse-checkout set --no-cone resources/profiles/BBL.json resources/profiles/BBL/ src/libslic3r/PrintConfig.cpp
+git checkout
+cd ~/Software/print3d_translator
+python tools/orca_keys.py ~/Software/orca-2.5.0-src/src/libslic3r/PrintConfig.cpp 2.5.0
+P3DT_ORCA=/Applications/OrcaSlicer-2.5.0.app/Contents/MacOS/OrcaSlicer \
+P3DT_ORCA_PROFILES=~/Software/orca-2.5.0-src/resources/profiles python -m print3d_translator.cli bench
+```
+
 ## Placement
 
 Each part takes, on a 0.5 mm grid:
@@ -342,6 +358,7 @@ OrcaSlicer's profiles are AGPL-3.0, so they are read from the installed OrcaSlic
 
 | Version | Changes |
 |---|---|
+| 2026.11.11.4 | Toward OrcaSlicer 2.5: setting names per OrcaSlicer version (`data/orca_keys-<version>.json`, `tools/orca_keys.py PrintConfig.cpp <version>`); a clear error when an install ships only compiled profiles (`.opc`). |
 | 2026.11.11.3 | A given OrcaSlicer uses only its own profiles (with OrcaSlicer 2.5.0 the profiles of the 2.4.2 install were picked up silently). |
 | 2026.11.11.2 | Checked on the Mac (OrcaSlicer 2.4.2): parts with their own filaments (cabin C2, from 3MF and from `parts`), pauses, colour changes, A350 plate 1 from the project. Fixes: height ranges carry their `layer_height` (OrcaSlicer 2.4.2 crashes in layer_height_profile_from_ranges without it); a top too thin to print is judged by the next layer's width (less than a line), not area; a bridge run whose path ends within a line of what is below is anchored, and "starts in mid-air" only when nothing is printed below within the measured margin; per-object settings validated against all of OrcaSlicer's process keys (brim_type was dropped); footprint measures support against the nearest object. |
 | 2026.11.11.1 | From a real job (an A350 model, 38 parts on 6 plates): objects of several `parts`, each with its own filament (merged by OrcaSlicer through `assemble_index`); 3MF part filaments kept (`filament_map`); `from_3mf` with plate selection, project positions and per-object `settings`; `threemf.py` (about 3× faster; modifiers no longer read as solids); `intent.color_changes` and `intent.pauses` (pauses inserted into the file that is checked, MD5 rewritten, hard check `pauses`); -101 explained as OrcaSlicer's toolpath-conflict check, on any printer, naming the two objects and their gap, and `needed` falls back from tree to normal supports; `closed_mesh` compares exact positions first, allows touching shells, gives bad-edge positions, and is hard only for holes or more than 10 bad edges; placement on silhouettes with `layout` (`first_layer` + 3D check, `gap`, `brims_may_overlap`) and centre → bottom-left → shelves; `accept`; layers, tools, volume, footprint and supports checked per object with its own settings; `top_slivers`; study-name length in the validation message. |
