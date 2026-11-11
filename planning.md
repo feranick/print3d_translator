@@ -490,3 +490,10 @@ One study = one plate. JSON, `{name: study}`. Units: mm, °C, %, mm/s.
     - Run the 2.5.0 bench again; then the cabin, colour change and pause, and A350 plates.
     - The pin stays 2.4.2 until the 2.5.0 results are consistent.
 
+- 2026-11-11: **2.5.0 verified on the Mac (2026.11.11.5).**
+  - Bench 3/3 on both versions. Real plates on 2.5.0 (run_20261111_135124_2fdda2) match 2.4.2 (run_20261111_134910_b8f0df):
+    - cabin C2 from the 3MF and from parts: reliable, 27.79 vs 27.93 g;
+    - C3 colour change + pause: reliable;
+    - A350 plate 1: the same findings and accepts, 442.46 vs 442.55 g, 13h20 vs 13h25.
+  - Differences come from Bambu's newer vendor profiles (02.08 vs 02.01): sparse_infill_pattern grid vs crosshatch; a smaller H2D prime tower.
+  - Switching needs the JSON profile tree (the 2.5 app ships BBL.opc only): P3DT_ORCA_PROFILES set for the MCP server and the shell, and `tools/orca_keys.py ... 2.5.0 --pinned` plus the pinned version in orca.py if 2.5.0 becomes the pin.
