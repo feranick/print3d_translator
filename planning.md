@@ -506,4 +506,4 @@ One study = one plate. JSON, `{name: study}`. Units: mm, °C, %, mm/s.
   - /Applications/OrcaSlicer.app is 2.5.0 (2.4.2 kept as OrcaSlicer-2.4.2.app). P3DT_ORCA_PROFILES is set in ~/.bash_profile and in the p3dt entry of claude_desktop_config.json ("env").
   - MCP status: 2.5.0, matches pin, profiles_version 02.08.00.16 = installed 2.8.0.16.
   - Cabin C3 colour change + pause through MCP: reliable (run_20261111_140121_b54ae3).
-  - Note: status shows b3dt: null since the config change (build123d-translator not importable in the MCP server's environment; b3dt results as STEP + volume still work, b3dt goals do not).
+  - b3dt: null in the MCP status was never caused by the config change. The MCP server runs from the project's .venv (Python 3.12: build123d 0.13.0, no build123d-translator); the shell's python has it. Fix: install it into .venv. 2026.11.11.7: status shows 'python' and a b3dt_hint.

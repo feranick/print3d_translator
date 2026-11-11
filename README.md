@@ -44,7 +44,7 @@ pytest -q
 - **Other installs:** set `P3DT_ORCA` (the executable). For OrcaSlicer 2.4.2, `P3DT_ORCA_PROFILES` is only needed if its `resources/profiles` (the folder with `BBL.json`) is not next to the executable.
 - **Linux:** the extracted AppImage works (`squashfs-root/AppRun`) and needs no display. Its release build is for Ubuntu 24.04 or later.
 - **Tests:** they run without OrcaSlicer. A fake OrcaSlicer (`tests/fake_orca.py`) and a hand-written profile tree stand in. The tests that need the real one are skipped when it is not found.
-- **b3dt goals:** to use build123d-translator goals, install it in the same venv (`pip install -e ~/Software/llm-translators/build123d-translator`).
+- **b3dt goals:** to use build123d-translator goals, install it in the same venv as the MCP server (`~/Software/print3d_translator/.venv/bin/python -m pip install -e ~/Software/llm-translators/build123d-translator`). `p3dt status` shows which Python is in use (`python`).
 
 ## Use
 
@@ -367,6 +367,7 @@ OrcaSlicer's profiles are AGPL-3.0, so they are read from the installed OrcaSlic
 
 | Version | Changes |
 |---|---|
+| 2026.11.11.7 | `status` shows the Python in use and, when build123d-translator is missing from it, how to install it there (the MCP server runs from the project's `.venv`, not the shell's Python). |
 | 2026.11.11.6 | Pinned to OrcaSlicer 2.5.0 (2.4.2's setting names kept in `data/orca_keys-2.4.2.json`). `status` and every run compare the vendor version of the JSON profiles read with the installed OrcaSlicer's (its compiled `BBL.opc`), and warn on a mismatch. Verified on the Mac: bench 3/3 on 2.5.0 and 2.4.2; the cabin plates, the colour change with a pause, and A350 plate 1 give the same results on both. |
 | 2026.11.11.5 | OrcaSlicer 2.5 support:
 - **Profile `include` templates** are flattened. At each level they override what is inherited, and the profile's own keys override them. Without this, 2.5's P2S profile fell back to a generic start G-code with no AMS filament load.

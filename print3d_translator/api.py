@@ -1,5 +1,5 @@
 """api.py — what the CLI and the MCP server call. JSON in, JSON out.
-Version: 2026.11.11.1
+Version: 2026.11.11.7
 
     tool_status()                 versions; OrcaSlicer and its profiles found or not; build123d
     study_format()                the study format (with tool_status), for the caller to read
@@ -57,7 +57,7 @@ def tool_status() -> dict:
     st = {"translator": __version__, "orca": orca.status(), "workers": workers(),
           "timeout_s": float(os.environ.get("P3DT_TIMEOUT", 600)), "out": str(out_root()),
           "executor": {"kind": "local", "caps": {"timeout_s": os.environ.get("P3DT_MAX_TIMEOUT")}},
-          "printer": "none: files only, never sent"}
+          "printer": "none: files only, never sent", "python": sys.executable}
     try:
         import build123d
         st["build123d"] = getattr(build123d, "__version__", "installed")
@@ -68,6 +68,9 @@ def tool_status() -> dict:
         st["b3dt"] = build123d_translator.__version__
     except ImportError:
         st["b3dt"] = None
+        st["b3dt_hint"] = (f"build123d-translator is not installed in this Python ({sys.executable}): b3dt goals "
+                           f"('part': {{'goal': ...}}) need it; b3dt results ({{'b3dt': {{'step', 'volume'}}}}) and STEP files "
+                           f"do not. Install: {sys.executable} -m pip install -e <llm-translators>/build123d-translator")
     return st
 
 
