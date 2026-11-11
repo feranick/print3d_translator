@@ -423,6 +423,11 @@ def _temperatures(P: G.Parsed, resolved: dict, used: list[int]) -> dict:
     for t in unc:
         if t["kind"] == "bed" and t["region"] == "print" and t["value"] not in allowed:
             problems.append(f"line {t['line'] + 1}: bed {t['value']}, expected one of {sorted(allowed)} ({formula})")
+    hottest = max((e["high"] for e in exp), default=1e9)
+    for t in unc:
+        if t["kind"] == "nozzle_standby" and t["value"] > hottest + 1e-6:
+            problems.append(f"line {t['line']}: idle-nozzle pre-heating to {t['value']:g} above every filament's range "
+                            f"(at most {hottest:g})")
     return _c(not problems, "nozzle and bed temperatures are the filaments' (first layer, then the rest), within range",
               got={"nozzle_start": got_first, "nozzle_in_print": {k: sorted(v) for k, v in seen.items()},
                    "bed_start": got_bed, "bed_max": max([got_bed or 0] + [t["value"] for t in unc if t["kind"] == "bed"

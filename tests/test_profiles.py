@@ -288,3 +288,43 @@ def test_real_profiles_resolve(model, nozzle):
         assert r["names"]["machine"] in r["process"]["compatible_printers"]
         assert r["names"]["machine"] in r["filaments"][0]["compatible_printers"]
         assert "inherits" not in r["process"] and "layer_height" in r["process"]
+
+
+def test_include_templates_orca_2_5(tmp_path):
+    """OrcaSlicer 2.5: a profile's 'include' templates override what it inherits; its own keys override them."""
+    import json
+    from print3d_translator import profiles as P
+    root = tmp_path / "profiles"
+    (root / "BBL" / "machine").mkdir(parents=True)
+    files = {"common": {"type": "machine", "name": "common", "machine_start_gcode": "G28 ; generic", "a": "1"},
+             "tpl": {"type": "machine", "name": "tpl", "instantiation": "false", "machine_start_gcode": "M620 S0A\nT0",
+                     "a": "2"},
+             "leaf": {"type": "machine", "name": "leaf", "inherits": "common", "include": ["tpl"], "instantiation": "true",
+                      "a": "3"}}
+    for n, d in files.items():
+        (root / "BBL" / "machine" / f"{n}.json").write_text(json.dumps(d))
+    (root / "BBL.json").write_text(json.dumps({"version": "1", "machine_list": [
+        {"name": n, "sub_path": f"machine/{n}.json"} for n in files]}))
+    f = P.Vendor(root).flatten("leaf")
+    assert f["machine_start_gcode"] == "M620 S0A\nT0" and f["a"] == "3"
+    assert "include" not in f and f["instantiation"] == "true" and f["name"] == "leaf"
+
+
+def test_idle_nozzle_preheat_is_not_a_printing_temperature():
+    from print3d_translator import gcode as G
+    P = G.parse("M83\nT0\nM104 S220\nM104 T1 S245 N0 ;Multi extruder pre heating\nM104 T1 S130 N0 ;pre cooling\n")
+    kinds = [(t["kind"], t["value"]) for t in P.temps]
+    assert kinds == [("nozzle", 220.0), ("nozzle_standby", 245.0), ("nozzle_standby", 130.0)]
+
+
+def test_roundtrip_orca_2_5_spellings():
+    from print3d_translator import gcode3mf as A
+    keys = {"top_surface_density": {"type": "Percent"}, "enable_arc_fitting": {"type": "Enum", "enum": ["disabled", "enabled"]},
+            "support_ironing_pattern": {"type": "Enum", "enum": ["rectilinear", "zigzag"]},
+            "filament_dev_ams_drying_temperature": {"type": "Floats"}}
+    r = A.roundtrip({}, {"top_surface_density": "100", "enable_arc_fitting": "0", "support_ironing_pattern": "zig-zag"},
+                    [{"filament_dev_ams_drying_temperature": ["45", "45"]}, {"filament_dev_ams_drying_temperature": ["65", "55"]}],
+                    {"top_surface_density": "100%", "enable_arc_fitting": "disabled", "support_ironing_pattern": "rectilinear",
+                     "filament_dev_ams_drying_temperature": ["45", "45", "65", "55"]}, keys)
+    assert r["passed"], r["differ"]
+    assert list(r["normalized_by_orca"]) == ["process.support_ironing_pattern"]

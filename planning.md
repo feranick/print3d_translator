@@ -477,4 +477,16 @@ One study = one plate. JSON, `{name: study}`. Units: mm, °C, %, mm/s.
     - Footprint support against the nearest object.
   - **Bulkhead ceilings:** the fuselages' internal ceilings are about 1.85 mm past the walls below, printed as Bridge + Overhang wall. They are flagged, and accepted with `accept`.
   - **OrcaSlicer 2.5.0:** an alpha (extruder variants change the profile format). Staying on 2.4.2.
+- 2026-11-11: **OrcaSlicer 2.5.0 (stable) beside 2.4.2 (2026.11.11.3 to 2026.11.11.5).**
+  - **Compiled profiles:** 2.5 ships `resources/profiles/BBL.opc` (binary "ZCRO", compiled from the JSON tree; vendor version 02.08.00.16) and no BBL.json.
+    - The JSON tree comes from the v2.5.0 source tag (sparse checkout, README "OrcaSlicer versions").
+    - find_profiles no longer falls back silently to another install.
+  - **First bench on 2.5.0:** all three sliced, all three unreliable. Causes:
+    - **`include` (new in 2.5):** machine profiles include G-code templates; 1,393 filaments include variant templates. The flattener ignored them, so the P2S start G-code was a generic 577-character one, with no AMS load and no T. Now flattened: per level, the includes, then the profile's own keys. The P2S start, end, change-filament, layer-change and timelapse G-code are back to Bambu's (11,752 vs 11,341 characters in 2.4.2).
+    - **`M104 T<nozzle> S N0`:** OrcaSlicer's idle-nozzle pre-heating and pre-cooling (H2D) → `nozzle_standby`.
+    - **Round-trip:** percent, bool→enum, per-filament back-to-back lists; values the profile has that are invalid for OrcaSlicer itself (support_ironing_pattern 'zig-zag', tree_support_wall_count -1) → normalized_by_orca. Offline on the 2.5 bench archives: passed (320 and 404 settings compared).
+    - **Setting names:** 995 keys in 2.5.0 vs 860 in 2.4.2: data/orca_keys-2.5.0.json, chosen by the detected version.
+  - **Next:**
+    - Run the 2.5.0 bench again; then the cabin, colour change and pause, and A350 plates.
+    - The pin stays 2.4.2 until the 2.5.0 results are consistent.
 

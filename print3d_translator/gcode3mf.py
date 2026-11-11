@@ -1,6 +1,6 @@
 """gcode3mf.py — the Bambu .gcode.3mf archive: read it, check its structure, compare the settings it
 was sliced with against ours, and fill in what OrcaSlicer's CLI leaves out.
-Version: 2026.11.11.1
+Version: 2026.11.11.5
 
 Layout written by OrcaSlicer 2.4.2 (--export-3mf after --slice), as seen on the P2S and H2D:
   [Content_Types].xml, _rels/.rels, 3D/3dmodel.model (+ 3D/Objects/*.model without --min-save),
@@ -164,28 +164,66 @@ def _norm(v):
         return s.replace("\r\n", "\n")
 
 
+_BOOL_ENUM = {"0": "disabled", "1": "enabled", "false": "disabled", "true": "enabled"}
+
+
+def _eq(a, b) -> bool:
+    """Scalars after _norm: equal, equal but for a '%' (OrcaSlicer 2.5 writes percent settings with it), or
+    a yes/no we wrote that OrcaSlicer 2.5 turned into a choice ('0' -> 'disabled')."""
+    if a == b:
+        return True
+    if isinstance(a, str) and isinstance(b, str):
+        if a.rstrip("%") == b.rstrip("%"):
+            return True
+        if _BOOL_ENUM.get(a.lower()) == b or _BOOL_ENUM.get(b.lower()) == a:
+            return True
+    return False
+
+
+def _invalid(v, spec: dict | None) -> bool:
+    """Our value is not valid for OrcaSlicer's own definition of the key (it then uses its default)."""
+    if not spec:
+        return False
+    vals = v if isinstance(v, list) else [v]
+    for x in vals:
+        x = str(x).strip()
+        if spec.get("enum") and x not in spec["enum"]:
+            return True
+        try:
+            f = float(x.rstrip("%"))
+        except ValueError:
+            continue
+        if ("min" in spec and f < spec["min"] - 1e-9) or ("max" in spec and f > spec["max"] + 1e-9):
+            return True
+    return False
+
+
 def _same(ours, theirs) -> bool:
     a, b = _norm(ours), _norm(theirs)
     if a in ([], "", None):                     # unset in our profile: OrcaSlicer's default applies
         return True
     if isinstance(a, list) and isinstance(b, list):
         # equal, or one value expanded per extruder variant (['0'] -> ['0', '0'])
-        return a == b or (len(a) == 1 and len(b) >= 1 and all(x == a[0] for x in b))
+        return (len(a) == len(b) and all(_eq(x, y) for x, y in zip(a, b))) or \
+            (len(a) == 1 and len(b) >= 1 and all(_eq(a[0], x) for x in b))
     if isinstance(a, list):                     # a list we wrote, a scalar sliced: the variant used
-        return b in a
+        return any(_eq(x, b) for x in a)
     if isinstance(b, list):
-        return len(b) >= 1 and all(x == a for x in b) or a in b
-    if isinstance(a, str) and isinstance(b, str) and "," in b and _POINT.match(str(ours) or ""):
-        return a == b
-    return a == b
+        return len(b) >= 1 and (all(_eq(a, x) for x in b) or any(_eq(a, x) for x in b))
+    return _eq(a, b)
 
 
-def roundtrip(machine: dict, process: dict, filaments: list[dict], project: dict, known: set) -> dict:
+def roundtrip(machine: dict, process: dict, filaments: list[dict], project: dict, known) -> dict:
     """Compares our flattened profiles with project_settings.config. Only keys OrcaSlicer knows (known)
     and that it wrote are compared; identity keys are skipped. Filament keys in project_settings are
     per filament, or per filament and extruder variant (filament_self_index tells which entry is
-    whose). Returns {passed, compared, differ: {key: [ours, sliced]}, skipped_unknown: n}."""
-    differ, compared, unknown = {}, 0, 0
+    whose; OrcaSlicer 2.5 also writes some per-filament lists back to back). known: OrcaSlicer's keys (a
+    dict of their definitions, or a set). A value of ours that OrcaSlicer's own definition rejects (an enum
+    it does not have, a number below its minimum), replaced by OrcaSlicer, is listed in
+    normalized_by_orca and does not fail. Returns {passed, compared, differ: {key: [ours, sliced]},
+    normalized_by_orca, skipped_unknown: n}."""
+    differ, compared, unknown, normalized = {}, 0, 0, {}
+    spec = known if isinstance(known, dict) else {}
     for where, cfg in (("machine", machine), ("process", process)):
         for k, v in cfg.items():
             if k in IDENTITY:
@@ -197,7 +235,7 @@ def roundtrip(machine: dict, process: dict, filaments: list[dict], project: dict
                 continue
             compared += 1
             if not _same(v, project[k]):
-                differ[f"{where}.{k}"] = [v, project[k]]
+                (normalized if _invalid(v, spec.get(k)) else differ)[f"{where}.{k}"] = [v, project[k]]
     selfidx = [int(float(s)) for s in project.get("filament_self_index", [])]
     nf = len(filaments)
     for i, cfg in enumerate(filaments, start=1):
@@ -214,12 +252,15 @@ def roundtrip(machine: dict, process: dict, filaments: list[dict], project: dict
                 mine = [theirs[j] for j, s in enumerate(selfidx) if s == i]
             elif isinstance(theirs, list) and len(theirs) == nf:
                 mine = theirs[i - 1]
+            elif isinstance(theirs, list) and isinstance(v, list) and len(v) > 1 and len(theirs) == nf * len(v):
+                mine = theirs[(i - 1) * len(v):i * len(v)]          # per filament, back to back
             else:
                 mine = theirs
             compared += 1
             if not _same(v, mine):
-                differ[f"filament.{i}.{k}"] = [v, mine]
-    return {"passed": not differ, "compared": compared, "differ": differ, "skipped_unknown": unknown}
+                (normalized if _invalid(v, spec.get(k)) else differ)[f"filament.{i}.{k}"] = [v, mine]
+    return {"passed": not differ, "compared": compared, "differ": differ, "normalized_by_orca": normalized,
+            "skipped_unknown": unknown}
 
 
 # ---------------------------------------------------------------- patching

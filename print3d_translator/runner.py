@@ -1,7 +1,7 @@
 """runner.py — one study end to end: validate, resolve profiles, load / orient / check / place the parts,
 write the flattened profiles, STLs and assemble list, run OrcaSlicer, fill in the archive's printer id,
 check everything independently, and write <name>.json (atomically).
-Version: 2026.11.11.2
+Version: 2026.11.11.5
 
 Study folder <name>/:
   profiles/          machine.json, process.json, filament_<i>.json (flattened copies; never the installed ones)
@@ -516,10 +516,11 @@ def _run_once(name: str, study: dict, folder: str | Path, base_dir=None, result:
         a = A.read(arch)
         checks = A.check_archive(a, plain.read_bytes() if plain.exists() else None, model_id, r["model"]["nozzle"],
                                  len(r["filaments"]), ctx["fmap"])
-        rt = A.roundtrip(r["machine"], r["process"], r["filaments"], a.get("project") or {}, set(P.orca_keys()["keys"]))
+        rt = A.roundtrip(r["machine"], r["process"], r["filaments"], a.get("project") or {}, P.orca_keys()["keys"])
         checks["settings_roundtrip"] = {"passed": rt["passed"], "hard": True,
                                         "why": "every setting we wrote is the one OrcaSlicer sliced with",
                                         "got": {"compared": rt["compared"], "differ": dict(list(rt["differ"].items())[:20]),
+                                                **({"normalized_by_orca": rt["normalized_by_orca"]} if rt["normalized_by_orca"] else {}),
                                                 "skipped_unknown": rt["skipped_unknown"]}}
         if a["gcode"] is None:
             res["why"] = "the archive has no Metadata/plate_1.gcode"

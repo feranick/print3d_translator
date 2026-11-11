@@ -1,7 +1,7 @@
 """profiles.py — OrcaSlicer system profiles: find them, index them, flatten them, choose the machine,
 process and filament profiles for a study, apply the intent and overrides, and write the flattened
 copies the OrcaSlicer CLI loads.
-Version: 2026.11.11.4
+Version: 2026.11.11.5
 
 Why we flatten: OrcaSlicer 2.4.2's --load-settings / --load-filaments read one JSON file and do not
 follow "inherits" (OrcaSlicer issue #14718): every key a leaf profile does not set silently falls back
@@ -24,7 +24,8 @@ from functools import lru_cache
 from pathlib import Path
 
 VENDOR = "BBL"
-META_KEYS = ("inherits",)        # dropped from flattened copies
+META_KEYS = ("inherits", "include")     # dropped from flattened copies
+TEMPLATE_IDENTITY = {"name", "type", "from", "instantiation", "setting_id", "inherits", "include"}
 _KINDS = {"machine_model_list": "machine_model", "machine_list": "machine",
           "process_list": "process", "filament_list": "filament"}
 
@@ -247,12 +248,21 @@ class Vendor:
         return out
 
     def flatten(self, name: str) -> dict:
-        """All keys of a profile with its parents' resolved, root first; 'inherits' dropped,
-        'from' = 'system'. Returns a copy."""
+        """All keys of a profile with its parents' resolved, root first, each level after its 'include'
+        templates (OrcaSlicer 2.5+); 'inherits' and 'include' dropped, 'from' = 'system'. Returns a copy."""
         if name not in self._flat:
             merged: dict = {}
             for n in reversed(self.chain(name)):
-                merged.update(self.raw(n))
+                own = self.raw(n)
+                # OrcaSlicer 2.5+: 'include' templates (G-code templates, filament variant templates); at each
+                # level of the chain they override what is inherited, and the profile's own keys override them
+                for inc in own.get("include") or []:
+                    t = self.raw(inc)
+                    if t.get("inherits") or t.get("include"):
+                        raise ProfileError(f"profile '{name}': included template '{inc}' inherits or includes; "
+                                           f"not supported")
+                    merged.update({k: v for k, v in t.items() if k not in TEMPLATE_IDENTITY})
+                merged.update(own)
             for k in META_KEYS:
                 merged.pop(k, None)
             merged["name"] = name

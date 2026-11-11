@@ -220,7 +220,7 @@ A benchmark passes when the result is reliable and its expected values hold.
 
 ## OrcaSlicer versions
 
-The translator is pinned to OrcaSlicer 2.4.2 (`p3dt status` shows the version found and whether it matches). OrcaSlicer 2.5 ships its vendor profiles compiled into one binary file per vendor (`resources/profiles/BBL.opc`); the translator reads the JSON profiles instead. To try 2.5.0 beside 2.4.2:
+The translator is pinned to OrcaSlicer 2.4.2 (`p3dt status` shows the version found and whether it matches). OrcaSlicer 2.5 ships its vendor profiles compiled into one binary file per vendor (`resources/profiles/BBL.opc`); the translator reads the JSON profiles of the same version instead (its source tag). It follows 2.5's profile `include` templates, which hold the machine G-code and the filament variant values, and it reads the setting names of the version in use (`data/orca_keys-<version>.json`). To try 2.5.0 beside 2.4.2:
 
 ```bash
 cd ~/Software
@@ -358,6 +358,10 @@ OrcaSlicer's profiles are AGPL-3.0, so they are read from the installed OrcaSlic
 
 | Version | Changes |
 |---|---|
+| 2026.11.11.5 | OrcaSlicer 2.5 support:
+- **Profile `include` templates** are flattened. At each level they override what is inherited, and the profile's own keys override them. Without this, 2.5's P2S profile fell back to a generic start G-code with no AMS filament load.
+- **Idle-nozzle pre-heating and pre-cooling** (`M104 T<nozzle> S.. N0`, H2D) is read as `nozzle_standby`, not as a printing temperature.
+- **Settings round-trip:** `100` = `100%`; a yes/no turned into a choice (`0` = `disabled`); per-filament lists written back to back; profile values that OrcaSlicer's own definitions reject are reported in `normalized_by_orca`, not failed. |
 | 2026.11.11.4 | Toward OrcaSlicer 2.5: setting names per OrcaSlicer version (`data/orca_keys-<version>.json`, `tools/orca_keys.py PrintConfig.cpp <version>`); a clear error when an install ships only compiled profiles (`.opc`). |
 | 2026.11.11.3 | A given OrcaSlicer uses only its own profiles (with OrcaSlicer 2.5.0 the profiles of the 2.4.2 install were picked up silently). |
 | 2026.11.11.2 | Checked on the Mac (OrcaSlicer 2.4.2): parts with their own filaments (cabin C2, from 3MF and from `parts`), pauses, colour changes, A350 plate 1 from the project. Fixes: height ranges carry their `layer_height` (OrcaSlicer 2.4.2 crashes in layer_height_profile_from_ranges without it); a top too thin to print is judged by the next layer's width (less than a line), not area; a bridge run whose path ends within a line of what is below is anchored, and "starts in mid-air" only when nothing is printed below within the measured margin; per-object settings validated against all of OrcaSlicer's process keys (brim_type was dropped); footprint measures support against the nearest object. |
