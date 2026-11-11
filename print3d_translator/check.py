@@ -1,7 +1,7 @@
 """check.py — independent checks of a sliced plate: the G-code (as gcode.py reads it) against the study,
 our flattened profiles and the placed geometry. Nothing here trusts OrcaSlicer's own summary; its
 estimates are only compared with ours.
-Version: 2026.10.30.1
+Version: 2026.11.11.1
 
 Each check is {passed, hard, why, got, expected, ...}. A failed hard check makes the result
 unreliable. The checks:
@@ -43,6 +43,7 @@ TOL_XY = 0.05           # mm, bounds
 SUPPORT_MARGIN = 5.0    # mm beyond the silhouette that supports may reach
 AUTO_BRIM_MAX = 10.0    # mm, allowance for brim_type auto_brim (assumption; see README)
 SEVERE_MAX = 5.0        # mm of extrusion more than 1 mm beyond support (noise allowance)
+SLIVER_AREA = 1.0       # mm2: a top thinner than this cross-section is not printed by the slicer (reported)
 
 
 def _c(passed: bool, why: str, hard: bool = True, **kw) -> dict:
@@ -112,24 +113,8 @@ class Footprint:
         hi = xy.reshape(-1, 2).max(axis=0) + pad
         self.res, self.lo = res, lo
         shape = np.ceil((hi - lo) / res).astype(int) + 1
-        mask = np.zeros((shape[1], shape[0]), dtype=bool)          # [row = y, col = x]
-        a = xy[:, 1] - xy[:, 0]
-        b = xy[:, 2] - xy[:, 0]
-        area2 = a[:, 0] * b[:, 1] - a[:, 1] * b[:, 0]
-        for t in np.nonzero(np.abs(area2) > 1e-9)[0]:
-            p = xy[t]
-            i0, j0 = np.floor((p.min(axis=0) - lo) / res).astype(int)
-            i1, j1 = np.ceil((p.max(axis=0) - lo) / res).astype(int)
-            gx = lo[0] + np.arange(i0, i1 + 1) * res
-            gy = lo[1] + np.arange(j0, j1 + 1) * res
-            X, Y = np.meshgrid(gx, gy)
-            d = area2[t]
-            w0 = ((p[1, 0] - X) * (p[2, 1] - Y) - (p[1, 1] - Y) * (p[2, 0] - X)) / d
-            w1 = ((p[2, 0] - X) * (p[0, 1] - Y) - (p[2, 1] - Y) * (p[0, 0] - X)) / d
-            w2 = 1 - w0 - w1
-            eps = 1e-9
-            inside_t = (w0 >= -eps) & (w1 >= -eps) & (w2 >= -eps)
-            mask[j0:j1 + 1, i0:i1 + 1] |= inside_t
+        from .placement import _raster
+        mask = _raster(tri, lo, (shape[1], shape[0]), res)            # [row = y, col = x]
         self.mask = mask
         self.dist = distance_transform_edt(~mask) * res               # 0 inside, mm outside
         self.shape = shape
@@ -140,6 +125,23 @@ class Footprint:
         out = np.full(len(pts), np.inf)
         out[ok] = self.dist[ij[ok, 1], ij[ok, 0]]
         return out
+
+
+def section_area_above(tri: np.ndarray, z: float, res: float = 0.05, levels: int = 6) -> float:
+    """The largest cross-section (mm2) of the mesh between z and its top, at a few heights."""
+    from .supports import voxelize
+    top = float(tri[:, :, 2].max())
+    if z >= top:
+        return 0.0
+    above = tri[tri[:, :, 2].max(axis=1) > z]
+    lo, hi = above[:, :, :2].reshape(-1, 2).min(axis=0), above[:, :, :2].reshape(-1, 2).max(axis=0)
+    # inside / outside along vertical rays needs every triangle of those columns, below z too
+    txy_lo, txy_hi = tri[:, :, :2].min(axis=1), tri[:, :, :2].max(axis=1)
+    keep = tri[np.all(txy_hi >= lo, axis=1) & np.all(txy_lo <= hi, axis=1)]
+    res = max(res, float(np.max(hi - lo)) / 1500)
+    zs = np.linspace(z, top - 1e-3, levels) if top - z > 2e-3 else np.array([z])
+    occ, _ = voxelize(keep, zs, res)
+    return float(occ.reshape(len(zs), -1).sum(axis=1).max() * res * res) if occ.size else 0.0
 
 
 def sample(seg: np.ndarray, step: float = 1.0) -> tuple[np.ndarray, np.ndarray]:
@@ -173,9 +175,10 @@ def category(feature: str) -> str:
 # ---------------------------------------------------------------- the checks
 
 def check_gcode(P: G.Parsed, resolved: dict, objects: list[dict], tower_bbox: list | None = None,
-                filament_map: list[int] | None = None) -> dict:
-    """objects: [{name (the G-code marker, e.g. 'part_1'), filament (1-based), tri (placed mesh),
-    volume (mm3, exact when known)}]. Returns {checks, gcode (summary), estimate}."""
+                filament_map: list[int] | None = None, color_changes: list[dict] | None = None) -> dict:
+    """objects: [{name (the G-code marker, e.g. 'part_1' or 'assemble_1'), filament (1-based), filaments (all
+    of its parts', optional), tri (placed mesh), volume (mm3, exact when known), settings (its own process
+    settings, optional)}]. color_changes: [{z, filament}]. Returns {checks, gcode (summary), estimate}."""
     machine, process, fils = resolved["machine"], resolved["process"], resolved["filaments"]
     cfg = P.config
 
@@ -238,29 +241,55 @@ def check_gcode(P: G.Parsed, resolved: dict, objects: list[dict], tower_bbox: li
         checks["travel"] = _c(okt, "travel moves of the print stay on the bed (1 mm margin)", hard=False,
                               got=tb, expected=[lo[0], lo[1], hi[0], hi[1]])
 
-    # layers
+    # each object's own settings (objects[].settings: OrcaSlicer per-object print_params) over the plate's
+    def opv(k):
+        own = objects[k].get("settings") or {}
+        return lambda key, default=None: own.get(key, pv(key, default))
+
+    # layers: per object (objects may have their own layer heights); support printed at its own layer
+    # heights (independent_support_layer_height, normal supports) adds support-only layers
     h1 = _f(pv("initial_layer_print_height"), 0.2)
     lh = _f(pv("layer_height"), 0.2)
-    H = max(float(M.bbox(o["tri"])[1][2]) for o in objects) if objects else 0.0
-    # support printed at its own layer heights (independent_support_layer_height, normal supports) adds
-    # support-only layers between the part's: the part's layers are those with anything but support
     part = printing & (cats != "support") if len(seg) else np.zeros(0, dtype=bool)
     zl = np.unique(np.round(seg[part, 4], 3)) if part.any() else np.array([])
     sup_only = sorted(set(info[printing, 4].tolist()) - set(info[part, 4].tolist())) if printing.any() else []
-    n_exp = 1 + max(0, int(math.floor((H - h1) / lh + 0.5))) if H > 0 else 0
-    dz = np.diff(zl) if len(zl) > 1 else np.array([])
-    steps_ok = bool(len(dz) == 0 or (np.all(np.abs(dz[:-1] - lh) <= TOL_Z) and 0 < dz[-1] <= lh + TOL_Z))
     first_ok = bool(len(zl) and abs(zl[0] - h1) <= TOL_Z)
-    top_ok = bool(len(zl) and abs(zl[-1] - H) <= lh / 2 + TOL_Z)
-    count_ok = abs(len(zl) - n_exp) <= 1 and len(zl) == len(P.layers) - len(sup_only) and \
-        (P.header.get("layers") in (None, len(P.layers)))
-    checks["layers"] = _c(count_ok and steps_ok and first_ok and top_ok,
-                          "layer count and heights as the study asks (first layer, then layer_height, top at the part height)",
+    per_layers, layers_ok, slivers = {}, first_ok, {}
+    for k, o in enumerate(objects):
+        lh_k = _f(opv(k)("layer_height"), lh)
+        H = float(M.bbox(o["tri"])[1][2])
+        zk = np.unique(np.round(seg[part & (obj_of_seg == k), 4], 3)) if part.any() else np.array([])
+        dz = np.diff(zk) if len(zk) > 1 else np.array([])
+        steps_ok = bool(len(dz) == 0 or (np.all(np.abs(dz[:-1] - lh_k) <= TOL_Z) and 0 < dz[-1] <= lh_k + TOL_Z))
+        top = float(zk[-1]) if len(zk) else None
+        top_ok = top is not None and abs(top - H) <= lh_k / 2 + TOL_Z
+        if top is not None and not top_ok and top < H:
+            area = section_area_above(o["tri"], top + lh_k / 2)
+            if area <= SLIVER_AREA:
+                slivers[o["name"]] = {"not_printed_mm": round(H - top, 3), "max_section_mm2": round(area, 3)}
+                top_ok = True
+        n_exp = 1 + max(0, int(math.floor(((top if top_ok and top is not None else H) - h1) / lh_k + 0.5)))
+        count_ok = len(zk) > 0 and abs(len(zk) - n_exp) <= 1
+        ok_k = bool(steps_ok and top_ok and count_ok and len(zk) and abs(zk[0] - h1) <= TOL_Z)
+        layers_ok &= ok_k
+        per_layers[o["name"]] = {"levels": int(len(zk)), "expected_levels": n_exp, "first": float(zk[0]) if len(zk) else None,
+                                 "top": top, "part_top": round(H, 4), "layer_height": lh_k,
+                                 "steps": sorted({round(float(v), 4) for v in dz})[:6], "passed": ok_k}
+    plate_ok = len(zl) == len(P.layers) - len(sup_only) and (P.header.get("layers") in (None, len(P.layers)))
+    checks["layers"] = _c(layers_ok and plate_ok,
+                          "per object: first layer, then its layer_height, its top at its height (+- half a layer; a "
+                          f"sliver of at most {SLIVER_AREA:g} mm2 cross-section above the last layer is reported, not "
+                          "failed); the plate's layer markers match",
                           got={"levels": int(len(zl)), "layer_markers": len(P.layers), "support_only_layers": len(sup_only),
-                               "header": P.header.get("layers"),
-                               "first": float(zl[0]) if len(zl) else None, "top": float(zl[-1]) if len(zl) else None,
-                               "steps": sorted({round(float(v), 4) for v in dz})[:6]},
-                          expected={"levels": n_exp, "first": h1, "layer_height": lh, "top": round(H, 4)})
+                               "header": P.header.get("layers"), "first": float(zl[0]) if len(zl) else None,
+                               "top": float(zl[-1]) if len(zl) else None, "by_object": per_layers,
+                               **({"slivers_not_printed": slivers} if slivers else {})},
+                          expected={"first": h1, "layer_height": lh})
+    if slivers:
+        checks["top_slivers"] = _c(False, "the top of these objects is thinner than a printable layer and is not printed "
+                                          "(trim it, or accept it)", hard=False, got=slivers,
+                                   problems=[f"{n}: top {v['not_printed_mm']} mm not printed (cross-section at most "
+                                             f"{v['max_section_mm2']} mm2)" for n, v in slivers.items()])
 
     # first_layer
     on_first = {}
@@ -272,17 +301,31 @@ def check_gcode(P: G.Parsed, resolved: dict, objects: list[dict], tower_bbox: li
                                got={"z": float(zl[0]) if len(zl) else None, "objects_on_first_layer": on_first},
                                expected={"z": h1})
 
-    # tools
+    # tools: each object with its parts' filaments; from each color change's height up, with that filament
     used = sorted({int(t) for t in info[printing, 1]}) if printing.any() else []
-    per_obj = {}
+    changes = sorted(color_changes or [], key=lambda c: c["z"])
+    per_obj, tools_ok, wrong = {}, all(0 <= t < len(fils) for t in used), {}
     for k, o in enumerate(objects):
         m = printing & (obj_of_seg == k) & (cats == "object")
         per_obj[o["name"]] = sorted({int(t) + 1 for t in info[m, 1]})
-    tools_ok = all(v == [o["filament"]] for v, o in zip(per_obj.values(), objects)) and \
-        all(0 <= t < len(fils) for t in used)
-    checks["tools"] = _c(tools_ok, "each object printed with its own filament; only the study's filaments used",
-                         got={"by_object": per_obj, "filaments_used": [t + 1 for t in used]},
-                         expected={o["name"]: o["filament"] for o in objects})
+        allowed = set(o.get("filaments") or [o["filament"]])
+        z = seg[:, 4]
+        t1 = info[:, 1] + 1
+        below = m & (z < changes[0]["z"] - TOL_Z) if changes else m
+        bad = int((below & ~np.isin(t1, sorted(allowed))).sum())
+        for i, c in enumerate(changes):
+            top = changes[i + 1]["z"] if i + 1 < len(changes) else 1e9
+            rng = m & (z >= c["z"] - TOL_Z) & (z < top - TOL_Z)
+            bad += int((rng & (t1 != c["filament"])).sum())
+        if bad:
+            wrong[o["name"]] = bad
+        tools_ok &= not bad and bool(per_obj[o["name"]])
+    checks["tools"] = _c(tools_ok, "each object printed with its parts' filaments (and from each color change's height "
+                                   "up, with that filament); only the study's filaments used",
+                         got={"by_object": per_obj, "filaments_used": [t + 1 for t in used],
+                              **({"segments_with_wrong_filament": wrong} if wrong else {})},
+                         expected={"by_object": {o["name"]: sorted(set(o.get("filaments") or [o["filament"]])) for o in objects},
+                                   **({"color_changes": changes} if changes else {})})
 
     # temperatures
     checks["temperatures"] = _temperatures(P, resolved, used)
@@ -295,10 +338,10 @@ def check_gcode(P: G.Parsed, resolved: dict, objects: list[dict], tower_bbox: li
                              got={"by_region_mm": unl})
 
     # extrusion_volume
-    checks["extrusion_volume"] = _volume(objects, vol, printing, obj_of_seg, cats, pv, lh, h1)
+    checks["extrusion_volume"] = _volume(objects, vol, printing, obj_of_seg, cats, opv, h1)
 
     # footprint
-    checks["footprint"] = _footprint(objects, seg, info, printing, obj_of_seg, cats, vol, pv, tower_bbox)
+    checks["footprint"] = _footprint(objects, seg, info, printing, obj_of_seg, cats, vol, pv, opv, tower_bbox)
 
     # wrapping-detection zone
     wz = mv("wrapping_exclude_area")
@@ -311,7 +354,7 @@ def check_gcode(P: G.Parsed, resolved: dict, objects: list[dict], tower_bbox: li
 
     # extrusion with nothing below it
     if printing.any():
-        checks["unsupported_extrusion"], checks["long_bridges"] = _support(P, pv, mv)
+        checks["unsupported_extrusion"], checks["long_bridges"] = _support(P, pv, mv, objects, obj_of_seg, opv)
 
     # estimates (OrcaSlicer's vs ours)
     checks["estimates"], estimate = _estimates(P, fils, diam)
@@ -414,23 +457,30 @@ def _compromises(resolved: dict, used: list[int], fmap: list[int] | None, ext_ar
     return out
 
 
-def _volume(objects, vol, printing, obj_of_seg, cats, pv, lh, h1) -> dict:
-    walls = _f(pv("wall_loops"), 2)
-    outer = _f(pv("outer_wall_line_width"), 0.42)
-    inner = _f(pv("inner_wall_line_width"), 0.45)
-    t_wall = outer + max(0.0, walls - 1) * inner
-    t_top = max(_f(pv("top_shell_layers"), 4) * lh, _f(pv("top_shell_thickness"), 0))
-    nb = _f(pv("bottom_shell_layers"), 3)
-    t_bot = max(h1 + (nb - 1) * lh if nb >= 1 else 0.0, _f(pv("bottom_shell_thickness"), 0))
-    dens = _f(pv("sparse_infill_density"), 15) / 100.0
+def _volume(objects, vol, printing, obj_of_seg, cats, opv, h1) -> dict:
     rows, ok = {}, True
+    model = {}
     for k, o in enumerate(objects):
+        pv = opv(k)
+        lh = _f(pv("layer_height"), 0.2)
+        walls = _f(pv("wall_loops"), 2)
+        outer = _f(pv("outer_wall_line_width"), 0.42)
+        inner = _f(pv("inner_wall_line_width"), 0.45)
+        t_wall = outer + max(0.0, walls - 1) * inner
+        t_top = max(_f(pv("top_shell_layers"), 4) * lh, _f(pv("top_shell_thickness"), 0))
+        nb = _f(pv("bottom_shell_layers"), 3)
+        t_bot = max(h1 + (nb - 1) * lh if nb >= 1 else 0.0, _f(pv("bottom_shell_thickness"), 0))
+        dens = _f(pv("sparse_infill_density"), 15) / 100.0
+        model[o["name"]] = {"wall_mm": round(t_wall, 3), "top_mm": round(t_top, 3), "bottom_mm": round(t_bot, 3),
+                            "infill": dens}
         tri = o["tri"]
         n = M.normals(tri)
         a = np.linalg.norm(M.normals(tri, unit=False), axis=1) / 2
         a_top = float(a[n[:, 2] > 0.7].sum())
         a_bot = float(a[n[:, 2] < -0.7].sum())
         a_side = float(a[np.abs(n[:, 2]) <= 0.7].sum())
+        inner = _internal_area([t for _, _, t in o.get("parts") or []])
+        a_top, a_bot = max(0.0, a_top - inner), max(0.0, a_bot - inner)
         V = float(o.get("volume") or M.volume(tri))
         shell = min(V, a_side * t_wall + a_top * t_top + a_bot * t_bot)
         expected = shell + dens * (V - shell)
@@ -440,24 +490,56 @@ def _volume(objects, vol, printing, obj_of_seg, cats, pv, lh, h1) -> dict:
         ok &= good
         rows[o["name"]] = {"got_mm3": round(got, 1), "model_mm3": round(expected, 1), "ratio": round(ratio, 3) if ratio else None,
                            "volume_mm3": round(V, 1), "shell_mm3": round(shell, 1), "passed": good}
+    first = next(iter(model.values()), {})
     return _c(ok, "extruded volume per object vs walls + shells + infill of its exact volume (+-25%), "
                   "never above 1.1 x the volume", got=rows,
-              expected={"wall_mm": round(t_wall, 3), "top_mm": round(t_top, 3), "bottom_mm": round(t_bot, 3),
-                        "infill": dens})
+              expected=first if all(v == first for v in model.values()) else model)
 
 
-def _footprint(objects, seg, info, printing, obj_of_seg, cats, vol, pv, tower_bbox) -> dict:
+def _internal_area(parts: list) -> float:
+    """Horizontal area where two parts of one object meet (one's top on another's bottom, same height):
+    the slicer prints the union, so neither is a top or bottom surface. Per height, the smaller of the
+    up-facing area of one part and the down-facing area of the others."""
+    if len(parts) < 2:
+        return 0.0
+    ups, downs = [], []
+    for t in parts:
+        n = M.normals(t)
+        a = np.linalg.norm(M.normals(t, unit=False), axis=1) / 2
+        z = np.round(t[:, :, 2].mean(axis=1), 2)
+        flat = np.ptp(t[:, :, 2], axis=1) < 1e-3
+        u, d = {}, {}
+        for zz, aa in zip(z[flat & (n[:, 2] > 0.99)], a[flat & (n[:, 2] > 0.99)]):
+            u[zz] = u.get(zz, 0.0) + aa
+        for zz, aa in zip(z[flat & (n[:, 2] < -0.99)], a[flat & (n[:, 2] < -0.99)]):
+            d[zz] = d.get(zz, 0.0) + aa
+        ups.append(u)
+        downs.append(d)
+    total = 0.0
+    for i, u in enumerate(ups):
+        for zz, au in u.items():
+            ad = sum(d.get(zz, 0.0) for j, d in enumerate(downs) if j != i)
+            total += min(au, ad)
+    return total
+
+
+def _footprint(objects, seg, info, printing, obj_of_seg, cats, vol, pv, opv, tower_bbox) -> dict:
     if not printing.any() or not objects:
         return _c(False, "nothing to check: no extrusion or no objects")
-    lw = max(_f(pv("outer_wall_line_width"), 0.42), _f(pv("inner_wall_line_width"), 0.45),
-             _f(pv("initial_layer_line_width"), 0.5), _f(pv("line_width"), 0.42))
-    brim_type = str(_first(pv("brim_type"), "auto_brim"))
-    bw = _f(pv("brim_width"), 5)
-    brim = 0.0 if brim_type == "no_brim" else (max(bw, AUTO_BRIM_MAX) if brim_type == "auto_brim" else bw)
-    brim += _f(pv("brim_object_gap"), 0.1) + lw
-    skirt = _f(pv("skirt_distance"), 2) + max(1.0, _f(pv("skirt_loops"), 0)) * lw + brim
-    allow = {"object": lw / 2 + 0.25, "brim": brim + 0.25, "skirt": skirt + 0.5,
-             "support": SUPPORT_MARGIN + brim, "other": lw / 2 + 0.25}
+
+    def allowances(p):
+        lw = max(_f(p("outer_wall_line_width"), 0.42), _f(p("inner_wall_line_width"), 0.45),
+                 _f(p("initial_layer_line_width"), 0.5), _f(p("line_width"), 0.42))
+        brim_type = str(_first(p("brim_type"), "auto_brim"))
+        bw = _f(p("brim_width"), 5)
+        brim = 0.0 if brim_type == "no_brim" else (max(bw, AUTO_BRIM_MAX) if brim_type == "auto_brim" else bw)
+        brim += _f(p("brim_object_gap"), 0.1) + lw
+        skirt = _f(p("skirt_distance"), 2) + max(1.0, _f(p("skirt_loops"), 0)) * lw + brim
+        return lw, {"object": lw / 2 + 0.25, "brim": brim + 0.25, "skirt": skirt + 0.5,
+                    "support": SUPPORT_MARGIN + brim, "other": lw / 2 + 0.25}
+
+    lw, allow = allowances(pv)
+    per_obj = [allowances(opv(k))[1] for k in range(len(objects))]
     fps = [Footprint(o["tri"]) for o in objects]
     m_all = printing & (cats != "tower")
     s = seg[m_all]
@@ -471,7 +553,7 @@ def _footprint(objects, seg, info, printing, obj_of_seg, cats, vol, pv, tower_bb
         own = obj_of_seg[sel] == k
         d_own[own] = d[own]
     use = np.where(obj_of_seg[sel] >= 0, d_own, d_any)
-    lim = np.array([allow.get(c, allow["object"]) for c in cats[sel]])
+    lim = np.array([(per_obj[k] if k >= 0 else allow).get(c, allow["object"]) for k, c in zip(obj_of_seg[sel], cats[sel])])
     out = use > lim
     by_cat = {}
     for c in np.unique(cats[sel][out]) if out.any() else []:
@@ -499,7 +581,8 @@ def _footprint(objects, seg, info, printing, obj_of_seg, cats, vol, pv, tower_bb
     return _c(passed, "no extrusion outside its allowed region (object silhouette + half a line; + brim; "
                       "+ support margin; the prime tower apart from the objects)",
               got={"outside": by_cat, "volume_outside_mm3": round(vol_out, 2), "tower": tower or None},
-              expected={"allowance_mm": {k: round(v, 2) for k, v in allow.items()}, "brim_type": brim_type})
+              expected={"allowance_mm": {k: round(v, 2) for k, v in allow.items()},
+                        "brim_type": str(_first(pv("brim_type"), "auto_brim"))})
 
 
 def _estimates(P: G.Parsed, fils: list[dict], diam: list[float]) -> tuple[dict, dict]:
@@ -556,11 +639,20 @@ def support_params(pv, nozzle: float) -> dict:
             "support_spacing": _f(pv("support_base_pattern_spacing"), 2.5), "supports": on}
 
 
-def _support(P: G.Parsed, pv, mv) -> tuple[dict, dict]:
+def _support(P: G.Parsed, pv, mv, objects=None, obj_of_seg=None, opv=None) -> tuple[dict, dict]:
+    """unsupported_extrusion (hard) and long_bridges (soft), object by object with each object's settings."""
     from . import supports as S
     nozzle = _f(mv("nozzle_diameter"), 0.4)
     sp = support_params(pv, nozzle)
-    u = S.unsupported(P, sp["line_width"], sp["layer_height"], sp["angle_deg"], sp["support_spacing"])
+    if objects and obj_of_seg is not None and len(obj_of_seg) == len(P.segments):
+        groups = []
+        for k, o in enumerate(objects):
+            q = support_params(opv(k), nozzle)
+            groups.append((o["name"], obj_of_seg == k, (q["line_width"], q["layer_height"], q["angle_deg"],
+                                                        q["support_spacing"])))
+        u = S.unsupported_groups(P, groups)
+    else:
+        u = S.unsupported(P, sp["line_width"], sp["layer_height"], sp["angle_deg"], sp["support_spacing"])
     problems = []
     for w in u["worst"]:
         if w["severe_mm"] <= 0:
@@ -569,17 +661,54 @@ def _support(P: G.Parsed, pv, mv) -> tuple[dict, dict]:
             f"reaches {'more than ' if w['beyond_at_least'] else ''}{w['max_beyond_mm']} mm past what is below"
         problems.append(f"z {w['z_mm']} mm at {w['xy']} ({', '.join(w['objects'])}): {w['severe_mm']} mm of "
                         f"extrusion {what}")
-    fix = "enable supports (intent.supports 'tree'), or orient the part so it grows from what is below"         if not sp["supports"] else "supports do not reach it: lower support_angle, or orient the part differently"
+    fix = "enable supports (intent.supports 'tree' or 'needed'), orient the part so it grows from what is below, " \
+          "or accept it (accept: [{check: 'unsupported_extrusion', object, z_range, reason}])" \
+        if not sp["supports"] else "supports do not reach it: lower support_angle, or orient the part differently"
     passed = u["severe_mm"] <= SEVERE_MAX
-    got = {k: u[k] for k in ("reach_mm", "unsupported_mm", "severe_mm", "layers_affected", "worst")}
+    got = {k: u[k] for k in ("reach_mm", "unsupported_mm", "severe_mm", "layers_affected", "worst") if k in u}
+    if u.get("by_object"):
+        got["by_object"] = {n: {kk: vv for kk, vv in v.items() if kk != "layers"} | {"severe_layers": v["layers"][:20]}
+                            for n, v in u["by_object"].items() if v["unsupported_mm"] > 0}
     unsup = _c(passed, f"every extrusion of the parts rests on the layer below or on support (within reach "
                        f"{u['reach_mm']} mm = half a line + layer_height / tan(support_angle); at most "
                        f"{SEVERE_MAX:g} mm more than 1 mm beyond it)" + ("" if passed else f"; fix: {fix}"),
                got=got, expected={"severe_mm_max": SEVERE_MAX, "supports": sp["supports"]}, problems=problems)
+    unsup["_findings"] = [{"object": n, "z": L[0], "severe_mm": L[1]} for n, v in (u.get("by_object") or {}).items()
+                          for L in v["layers"]]
     lb = u["long_bridges"]
     bridges = _c(lb["longest_mm"] <= S.BRIDGE_MAX, f"bridges up to {S.BRIDGE_MAX:g} mm (longer ones sag)", hard=False,
-                 got=lb, problems=[f"z {w['z_mm']} mm: bridge of {w['span_mm']} mm" for w in lb["worst"]])
+                 got=lb, problems=[f"z {w['z_mm']} mm{' (' + w['object'] + ')' if w.get('object') else ''}: bridge of "
+                                   f"{w['span_mm']} mm" for w in lb["worst"]])
     return unsup, bridges
+
+
+def check_pauses(text: str, pauses: list[dict], pause_gcode: str) -> dict:
+    """Each pause once, at the start of the first layer above its height (before that layer's first
+    extrusion), followed by the machine's pause G-code."""
+    want = sorted(p["z"] for p in pauses)
+    cmds = [c.strip() for c in pause_gcode.strip().split("\n") if c.strip()]
+    found, layer_z, extruded, lines = [], None, False, text.split("\n")
+    for i, line in enumerate(lines):
+        if line.startswith("; CHANGE_LAYER"):
+            layer_z, extruded = None, False
+        elif line.startswith("; Z_HEIGHT:") and layer_z is None:
+            layer_z = float(line.split(":", 1)[1])
+        elif line.startswith(("G1 ", "G2 ", "G3 ")) and " E" in line and layer_z is not None:
+            try:
+                extruded |= float(line.split(" E", 1)[1].split()[0]) > 0
+            except ValueError:
+                pass
+        elif line.startswith("; PAUSE_PRINTING"):
+            follow = [l_.strip() for l_ in lines[i + 1:i + 2 + len(cmds)]]
+            found.append({"layer_z": layer_z, "before_extrusion": not extruded, "line": i + 1,
+                          "gcode_follows": all(c in follow for c in cmds)})
+    layers = sorted({float(l_.split(":", 1)[1]) for l_ in lines if l_.startswith("; Z_HEIGHT:")})
+    expected = [next((z for z in layers if z > w + 1e-6), None) for w in want]
+    ok = len(found) == len(want) and all(f["layer_z"] is not None and abs(f["layer_z"] - e) < 1e-4 and f["before_extrusion"]
+                                         and f["gcode_follows"] for f, e in zip(found, expected))
+    return _c(ok, f"each pause once, before the first extrusion of the first layer above its height, with the "
+                  f"machine's pause G-code ({' / '.join(cmds)})", got=found,
+              expected=[{"z": w, "layer_z": e} for w, e in zip(want, expected)])
 
 
 def verdict(checks: dict) -> tuple[bool, list[str]]:

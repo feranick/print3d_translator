@@ -1,6 +1,6 @@
 """orca.py — the OrcaSlicer command line: find it, tell its version, build the command, run it in its
 own process group with a timeout and a cancel flag, and decode its exit status.
-Version: 2026.10.24.9
+Version: 2026.11.11.1
 
 The translator never asks OrcaSlicer to do anything but slice files: no printer, network or cloud
 options are ever passed. Geometry comes in through an assemble list (--load-assemble-list): one STL
@@ -53,7 +53,8 @@ EXIT_FIXES = {
     -64: "objects collide: give them more room",
     -66: "a filament cannot be mapped to an extruder: set filaments[].extruder",
     -68: "a filament is not supported by its extruder: assign it to the other extruder",
-    -101: "G-code paths conflict (multi-extruder): move the objects apart",
+    -101: "the toolpaths of two objects cross on some layer (OrcaSlicer's conflict check, on any printer): "
+          "usually one part's supports or brim reaching another part; move them apart",
     -102: "G-code in an area one extruder cannot reach: move the objects, or assign the filament to the other extruder",
 }
 
@@ -119,12 +120,34 @@ def decode(returncode: int) -> dict:
     return {"code": code, "name": EXIT_CODES.get(code, f"UNKNOWN_{code}"), "fix": EXIT_FIXES.get(code)}
 
 
-def assemble_list(objects: list[dict], plate_name: str = "") -> dict:
-    """The --load-assemble-list JSON for one plate. objects: [{path (STL in bed coordinates),
-    filament (1-based)}]. Positions are 0 (the STL is already placed) and the plate is not arranged."""
-    return {"plates": [{"plate_name": plate_name, "need_arrange": False,
-                        "objects": [{"path": str(o["path"]), "count": 1, "filaments": [int(o["filament"])],
-                                     "pos_x": [0.0], "pos_y": [0.0], "pos_z": [0.0]} for o in objects]}]}
+def assemble_list(objects: list[dict], plate_name: str = "", assembled: dict | None = None) -> dict:
+    """The --load-assemble-list JSON for one plate. objects: [{path (STL in bed coordinates), filament
+    (1-based), assemble_index (optional: entries sharing an index > 0 become one object with several
+    parts, OrcaSlicer names it 'assemble_<index>'), print_params (optional: per-object settings),
+    height_ranges (optional: [{min_z, max_z, range_params}])}]. assembled: {index: {print_params,
+    height_ranges}} for the merged objects. Positions are 0 (the STL is already placed) and the plate
+    is not arranged."""
+    objs = []
+    for o in objects:
+        e = {"path": str(o["path"]), "count": 1, "filaments": [int(o["filament"])],
+             "pos_x": [0.0], "pos_y": [0.0], "pos_z": [0.0]}
+        if o.get("assemble_index"):
+            e["assemble_index"] = [int(o["assemble_index"])]
+        if o.get("print_params"):
+            e["print_params"] = {k: str(v) for k, v in o["print_params"].items()}
+        if o.get("height_ranges"):
+            e["height_ranges"] = o["height_ranges"]
+        objs.append(e)
+    plate = {"plate_name": plate_name, "need_arrange": False, "objects": objs}
+    if assembled:
+        plate["assembled_params"] = [{"assemble_index": int(k), **{kk: vv for kk, vv in v.items() if vv}}
+                                     for k, v in sorted(assembled.items())]
+    return {"plates": [plate]}
+
+
+def conflicts(log_text: str) -> list[tuple[str, str]]:
+    """The object pairs OrcaSlicer's toolpath-conflict check names in its log."""
+    return re.findall(r"gcode path conflicts found between (\S+) and (\S+)", log_text)
 
 
 def command(exe: str, folder: Path, machine: str, process: str, filaments: list[str], assemble: str,

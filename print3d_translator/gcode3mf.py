@@ -1,6 +1,6 @@
 """gcode3mf.py — the Bambu .gcode.3mf archive: read it, check its structure, compare the settings it
 was sliced with against ours, and fill in what OrcaSlicer's CLI leaves out.
-Version: 2026.10.24.9
+Version: 2026.11.11.1
 
 Layout written by OrcaSlicer 2.4.2 (--export-3mf after --slice), as seen on the P2S and H2D:
   [Content_Types].xml, _rels/.rels, 3D/3dmodel.model (+ 3D/Objects/*.model without --min-save),
@@ -237,6 +237,63 @@ def _set_meta(xml: str, key: str, value: str) -> str:
         return re.sub(pat, lambda m: f"{m.group(1)}{value}{m.group(2)}", xml, count=1)
     return re.sub(r'(\n(\s*)<metadata key="index" value="[^"]*"/>)',
                   lambda m: f'{m.group(1)}\n{m.group(2)}<metadata key="{key}" value="{value}"/>', xml, count=1)
+
+
+PAUSE_MARK = "; PAUSE_PRINTING"
+
+
+def insert_pauses(text: str, pauses: list[dict], pause_gcode: str) -> tuple[str, list[dict]]:
+    """Inserts the machine's pause G-code before the first extrusion of the first layer above each pause
+    height (z: print up to z, pause, go on). Returns (new text, [{z, layer_z, line}])."""
+    lines = text.split("\n")
+    zs = []                                            # (index of '; CHANGE_LAYER', layer top z)
+    for i, line in enumerate(lines):
+        if line.startswith("; CHANGE_LAYER"):
+            z = None
+            for j in range(i + 1, min(i + 4, len(lines))):
+                if lines[j].startswith("; Z_HEIGHT:"):
+                    z = float(lines[j].split(":", 1)[1])
+            zs.append((i, z))
+    plan = []
+    for p in sorted(pauses, key=lambda q: q["z"]):
+        nxt = next(((i, z) for i, z in zs if z is not None and z > p["z"] + 1e-6), None)
+        if nxt is None:
+            raise ValueError(f"intent.pauses: z {p['z']} mm is at or above the top layer; nothing prints after it")
+        i = nxt[0] + 1
+        while i < len(lines) and not (lines[i].startswith("; FEATURE:") or lines[i].startswith("; printing object")
+                                      or lines[i].startswith("M620 S") or lines[i].startswith("; CHANGE_LAYER")):
+            i += 1
+        note = str(p.get("note") or "").replace("\n", " ")[:80]
+        block = [PAUSE_MARK, f"; p3dt pause at z {p['z']:g}{': ' + note if note else ''}", *pause_gcode.strip().split("\n")]
+        plan.append((i, block, p["z"], nxt[1]))
+    out, done = list(lines), []
+    for i, block, z, lz in sorted(plan, key=lambda t: -t[0]):
+        out[i:i] = block
+    # line numbers after insertion
+    k = 0
+    for n, line in enumerate(out):
+        if line == PAUSE_MARK:
+            z_req, lz = sorted(plan, key=lambda t: t[0])[k][2:4]
+            done.append({"z": z_req, "layer_z": lz, "line": n + 1})
+            k += 1
+    return "\n".join(out), done
+
+
+def replace_gcode(path: str | Path, text: str) -> None:
+    """Writes new G-code into the archive's Metadata/plate_1.gcode with its md5 (upper-case hex)."""
+    path = Path(path)
+    data = text.encode("utf-8")
+    with zipfile.ZipFile(path) as z:
+        items = [(i, z.read(i.filename)) for i in z.infolist()]
+    tmp = path.with_suffix(".tmp")
+    with zipfile.ZipFile(tmp, "w") as z:
+        for i, b in items:
+            if i.filename == "Metadata/plate_1.gcode":
+                b = data
+            elif i.filename == "Metadata/plate_1.gcode.md5":
+                b = hashlib.md5(data).hexdigest().upper().encode()
+            z.writestr(i, b)
+    tmp.replace(path)
 
 
 def finalize(path: str | Path, model_id: str | None, extruders: int = 1, first_layer_s: float | None = None,

@@ -1,5 +1,5 @@
 """supports.py — will the part print without supports? Two independent answers:
-Version: 2026.10.30.1
+Version: 2026.11.11.1
 
 1. From the geometry, before slicing (regions()): the part is voxelized at the real layer heights
    (vertical rays through a 0.25 mm grid, inside/outside from the mesh's crossings). On each layer,
@@ -66,7 +66,32 @@ def voxelize(tri: np.ndarray, zc: np.ndarray, res: float = RES):
     keep = np.abs(n[:, 2]) > 1e-12
     T, sgn = tri[keep], np.where(n[keep, 2] < 0, 1, -1)       # +1 entering, -1 leaving (going up)
     delta = np.zeros((len(zc) + 1, ny, nx), dtype=np.int8)
-    for k in range(len(T)):
+    X_ = (T[:, :, 0] - ox) / res
+    Y_ = (T[:, :, 1] - oy) / res
+    I0, I1 = np.ceil(X_.min(axis=1)).astype(int), np.floor(X_.max(axis=1)).astype(int)
+    J0, J1 = np.ceil(Y_.min(axis=1)).astype(int), np.floor(Y_.max(axis=1)).astype(int)
+    small = (I1 - I0 <= 1) & (J1 - J0 <= 1)
+    # triangles spanning at most 2 x 2 pixel centres, all at once
+    xs, ys, zs_ = X_[small], Y_[small], T[small][:, :, 2]
+    d_ = (ys[:, 1] - ys[:, 2]) * (xs[:, 0] - xs[:, 2]) + (xs[:, 2] - xs[:, 1]) * (ys[:, 0] - ys[:, 2])
+    ok_d = np.abs(d_) > 1e-18
+    for di in (0, 1):
+        for dj in (0, 1):
+            X = I0[small] + di
+            Y = J0[small] + dj
+            valid = ok_d & (X <= I1[small]) & (Y <= J1[small])
+            if not valid.any():
+                continue
+            dd = np.where(valid, d_, 1.0)
+            w0 = ((ys[:, 1] - ys[:, 2]) * (X - xs[:, 2]) + (xs[:, 2] - xs[:, 1]) * (Y - ys[:, 2])) / dd
+            w1 = ((ys[:, 2] - ys[:, 0]) * (X - xs[:, 2]) + (xs[:, 0] - xs[:, 2]) * (Y - ys[:, 2])) / dd
+            w2 = 1 - w0 - w1
+            ins = valid & (w0 >= 0) & (w1 >= 0) & (w2 >= 0)
+            if not ins.any():
+                continue
+            z = w0[ins] * zs_[ins, 0] + w1[ins] * zs_[ins, 1] + w2[ins] * zs_[ins, 2]
+            np.add.at(delta, (np.searchsorted(zc, z), Y[ins], X[ins]), sgn[small][ins].astype(np.int8))
+    for k in np.nonzero(~small)[0]:
         p = T[k]
         x, y = (p[:, 0] - ox) / res, (p[:, 1] - oy) / res
         i0, i1 = int(math.ceil(x.min())), int(math.floor(x.max()))
@@ -216,7 +241,7 @@ class _Mask:
 
 
 def unsupported(P, line_width: float, layer_height: float, angle_deg: float, support_spacing: float = 2.5,
-                bridge_max: float = BRIDGE_MAX, res: float = GRES) -> dict:
+                bridge_max: float = BRIDGE_MAX, res: float = GRES, select: np.ndarray | None = None) -> dict:
     """Extrusion of the part farther than `reach` from what the layer below printed. What a layer offers
     the next is an area: its perimeters filled (sparse infill touches the layer above only at crossings),
     and its support lines with their spacing filled (a part's first layer spans the support's lines like
@@ -225,7 +250,8 @@ def unsupported(P, line_width: float, layer_height: float, angle_deg: float, sup
     with supported path on both sides, about straight between them, is a bridge: accepted, but spans over
     bridge_max mm are listed in long_bridges (they sag).
     Returns {reach_mm, unsupported_mm (past reach), severe_mm (more than 1 mm past reach), by_layer,
-    worst, layers_affected, long_bridges, flags (bool per segment of P: severe)}. worst[].floating: a
+    worst, layers_affected, long_bridges, flags (bool per segment of P: severe)}. select: only these
+    segments (an object's: each object rests on its own layers when objects have different layer heights). worst[].floating: a
     whole extrusion path with nothing below (it starts in mid-air). Distances are exact up to reach +
     support_spacing / 2 + 2 mm; max_beyond_mm stops there (beyond_at_least: true)."""
     from scipy import ndimage
@@ -238,6 +264,8 @@ def unsupported(P, line_width: float, layer_height: float, angle_deg: float, sup
     out = {"reach_mm": round(r, 3), "unsupported_mm": 0.0, "severe_mm": 0.0, "by_layer": {}, "worst": [],
            "layers_affected": 0, "long_bridges": []}
     m = info[:, 0] == 1 if len(info) else np.zeros(0, bool)
+    if select is not None and len(m):
+        m = m & select                                # one object's extrusion (and its support)
     if not m.any():
         out["flags"] = flags
         return out
@@ -379,4 +407,37 @@ def unsupported(P, line_width: float, layer_height: float, angle_deg: float, sup
     out["long_bridges"] = {"layers": len(lb), "longest_mm": lb[0][1] if lb else 0.0,
                            "worst": [{"layer": L + 1, "z_mm": lz.get(L), "span_mm": v, "count": c} for L, v, c in lb[:3]]}
     out["flags"] = flags
+    return out
+
+
+def unsupported_groups(P, groups: list[tuple]) -> dict:
+    """unsupported() per object, merged. groups: [(name, select mask over P's segments, (line_width,
+    layer_height, angle_deg, support_spacing))]. Adds by_object {name: {unsupported_mm, severe_mm,
+    layers: [[z, severe_mm, floating]]}} and worst[].objects."""
+    out = {"reach_mm": None, "unsupported_mm": 0.0, "severe_mm": 0.0, "worst": [], "layers_affected": 0,
+           "long_bridges": {"layers": 0, "longest_mm": 0.0, "worst": []}, "by_object": {},
+           "flags": np.zeros(len(P.segments), dtype=bool)}
+    for name, sel, (lw, lh, ang, sp) in groups:
+        if not sel.any():
+            continue
+        u = unsupported(P, lw, lh, ang, sp, select=sel)
+        out["reach_mm"] = u["reach_mm"] if out["reach_mm"] is None else max(out["reach_mm"], u["reach_mm"])
+        out["unsupported_mm"] = round(out["unsupported_mm"] + u["unsupported_mm"], 1)
+        out["severe_mm"] = round(out["severe_mm"] + u["severe_mm"], 1)
+        out["layers_affected"] += u["layers_affected"]
+        out["flags"] |= u["flags"]
+        for w in u["worst"]:
+            out["worst"].append({**w, "objects": [name]})
+        lz = {i: l.get("z_height") for i, l in enumerate(P.layers)}
+        out["by_object"][name] = {"unsupported_mm": u["unsupported_mm"], "severe_mm": u["severe_mm"], "reach_mm": u["reach_mm"],
+                                  "layers": [[lz.get(L), v[1], v[0]] for L, v in sorted(u["by_layer"].items()) if v[1] > 0]}
+        lb = u["long_bridges"]
+        if lb["layers"]:
+            out["long_bridges"]["layers"] += lb["layers"]
+            out["long_bridges"]["longest_mm"] = max(out["long_bridges"]["longest_mm"], lb["longest_mm"])
+            out["long_bridges"]["worst"] += [{**w, "object": name} for w in lb["worst"]]
+    out["worst"] = sorted(out["worst"], key=lambda w: (-w["severe_mm"], -w["mm"]))[:5]
+    out["long_bridges"]["worst"] = sorted(out["long_bridges"]["worst"], key=lambda w: -w["span_mm"])[:3]
+    if out["reach_mm"] is None:
+        out["reach_mm"] = 0.0
     return out

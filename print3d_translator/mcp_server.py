@@ -1,6 +1,6 @@
 """mcp_server.py — MCP server (stdio): lets LLM-based tools turn parts into checked Bambu Lab print files
 with OrcaSlicer. It never talks to a printer.
-Version: 2026.10.30.2
+Version: 2026.11.11.1
 
 Tools (all JSON):
   study_format      the study format: printer, filaments, objects, intent, overrides. Read it first.
@@ -36,7 +36,12 @@ Before using a result check 'reliable' (false: do not print it; 'unreliable_beca
 unsupported_extrusion fails when part of a layer has nothing below it (a feature starting in mid-air, a
 cantilever): enable supports ("tree") or orient the part differently, and say where it was (z, xy).
 The file to print is files.gcode_3mf: the user prints it from the printer's SD card, Bambu Studio or Handy.
-Hints: orient 'flat' puts the largest flat face down; 'at' [x, y] fixes a part's centre; H2D filaments take
+Hints: orient 'flat' puts the largest flat face down; 'at' [x, y] fixes the centre of a part's bounding box;
+an object of several solids with their own filaments: objects[].parts [{name, part, filament}]; a Bambu Studio
+project: objects[].from_3mf {path, plate} (positions, part filaments, per-object settings); per-object
+settings: objects[].settings; layout {overlap: 'first_layer', gap, brims_may_overlap} for nested plates;
+intent.color_changes [{z, filament}] and intent.pauses [{z}]; accept [{check, object, z_range, reason}] for a
+known finding accepted on purpose (it stays listed); H2D filaments take
 extruder 'left'/'right'; filaments at different temperatures on one nozzle need allow_mix_temp: true;
 give each filament a color (flush volumes depend on it); intent.supports "needed" slices without supports and
 again with tree supports only if something would have nothing below it (supports_decision says which and why); "view": true (or make_view) writes a 3D view to open in a browser.

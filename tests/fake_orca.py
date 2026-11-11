@@ -5,8 +5,9 @@ extrusion volume, layers, temperatures and placement follow those settings. FAKE
   ok (default) | fail17 (exit -17) | crash (killed by a signal) | shift (parts printed 6 mm off) | hot (+20 C nozzle)
   | overhang (each part's walls inset 6 mm except its top 2 layers, which hang over; with enable_support,
     support lines under them)
+  | conflict (exit -101, the log names two objects) | tree_conflict (the same, only with tree supports on)
   | sleep (never ends, for timeouts and cancel)
-Version: 2026.10.24.7
+Version: 2026.11.11.1
 """
 import hashlib
 import json
@@ -17,6 +18,8 @@ import sys
 import time
 import zipfile
 from pathlib import Path
+
+import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from print3d_translator import mesh as M  # noqa: E402
@@ -39,17 +42,24 @@ def main(argv):
     if "--help" in argv:
         print("OrcaSlicer-2.4.2:\nUsage: orca-slicer [ OPTIONS ] [ file.3mf/file.stl ... ]")
         return 0
-    mode = os.environ.get("FAKE_ORCA_MODE", "ok")
-    if mode == "fail17":
+    modes = set(os.environ.get("FAKE_ORCA_MODE", "ok").split(","))     # several at once: "overhang,tree_conflict"
+    if "fail17" in modes:
         return 256 - 17
-    if mode == "crash":
+    if "crash" in modes:
         os.kill(os.getpid(), signal.SIGKILL)   # SIGSEGV would make macOS write a crash report
-    if mode == "sleep":
+    if "sleep" in modes:
         time.sleep(600)
     machine, process = [json.loads(Path(p).read_text()) for p in arg(argv, "--load-settings").split(";")]
     fils = [json.loads(Path(p).read_text()) for p in arg(argv, "--load-filaments").split(";")]
     assemble = json.loads(Path(arg(argv, "--load-assemble-list")).read_text())
     out = Path(arg(argv, "--outputdir"))
+    raw = lambda k: str(process.get(k)[0] if isinstance(process.get(k), list) else process.get(k))  # noqa: E731
+    if "conflict" in modes or ("tree_conflict" in modes and "tree" in raw("support_type")
+                              and raw("enable_support") in ("1", "true", "True")):
+        names = [Path(o["path"]).stem + "_1" for o in assemble["plates"][0]["objects"]]
+        Path(arg(argv, "--logfile")).write_text(f"gcode path conflicts found between {names[0]} and {names[-1]}\n"
+                                                "plate 1: found slicing result conflict!\n")
+        return 256 - 101
     bed_type = arg(argv, "--curr-bed-type", "Textured PEI Plate")
     temp_key = {"Textured PEI Plate": "textured_plate_temp", "High Temp Plate": "hot_plate_temp",
                 "Engineering Plate": "eng_plate_temp"}.get(bed_type, "textured_plate_temp")
@@ -63,24 +73,49 @@ def main(argv):
     tbot = max(h1 + (nb - 1) * lh if nb >= 1 else 0, first(process.get("bottom_shell_thickness"), 0))
     area_f = math.pi * 0.875 ** 2
     objs = []
+    merged = {}
     for k, o in enumerate(assemble["plates"][0]["objects"]):
         tri = M.read_stl(o["path"])
         lo, hi = M.bbox(tri)
-        if mode == "shift":
+        if "shift" in modes:
             lo[0] += 6
             hi[0] += 6
         sx, sy, sz = hi - lo
         V = sx * sy * sz
         shell = min(V, 2 * (sx + sy) * sz * (ow + (walls - 1) * iw) + sx * sy * (ttop + tbot))
-        objs.append({"name": Path(o["path"]).stem + "_1", "tool": o["filaments"][0] - 1, "lo": lo, "hi": hi,
-                     "model": shell + dens * (V - shell), "id": 100 + k})
+        ai = (o.get("assemble_index") or [0])[0]
+        part = {"tool": o["filaments"][0] - 1, "lo": lo, "hi": hi, "model": shell + dens * (V - shell)}
+        if ai > 0 and ai in merged:                # as OrcaSlicer: one object 'assemble_<n>' with several parts
+            merged[ai]["parts"].append(part)
+            merged[ai]["hi"] = np.maximum(merged[ai]["hi"], hi)
+            continue
+        ob = {"name": f"assemble_{ai}" if ai > 0 else Path(o["path"]).stem + "_1", "lo": lo, "hi": hi,
+              "id": 100 + k, "parts": [part], "tool": part["tool"],
+              "ranges": [(r["min_z"], r["max_z"], int(r["range_params"]["extruder"]) - 1)
+                         for r in o.get("height_ranges") or [] if "extruder" in r.get("range_params", {})]}
+        objs.append(ob)
+        if ai > 0:
+            merged[ai] = ob
+    for ap in assemble["plates"][0].get("assembled_params") or []:
+        if ap["assemble_index"] in merged:
+            merged[ap["assemble_index"]]["ranges"] = [(r["min_z"], r["max_z"], int(r["range_params"]["extruder"]) - 1)
+                                                      for r in ap.get("height_ranges") or [] if "extruder" in r.get("range_params", {})]
+    for ob in merged.values():                     # OrcaSlicer slices the union: one shell around the parts
+        lo = np.min([p_["lo"] for p_ in ob["parts"]], axis=0)
+        hi = np.max([p_["hi"] for p_ in ob["parts"]], axis=0)
+        sx, sy, sz = hi - lo
+        V = sx * sy * sz
+        shell = min(V, 2 * (sx + sy) * sz * (ow + (walls - 1) * iw) + sx * sy * (ttop + tbot))
+        vols = [float(np.prod(p_["hi"] - p_["lo"])) for p_ in ob["parts"]]
+        for p_, v in zip(ob["parts"], vols):
+            p_["model"] = (shell + dens * (V - shell)) * v / sum(vols)
     zs = [h1]
     top = max(o["hi"][2] for o in objs)
     while zs[-1] + lh <= top + 1e-6:
         zs.append(round(zs[-1] + lh, 4))
-    tools = sorted({o["tool"] for o in objs})
-    temps = {t: (first(fils[t].get("nozzle_temperature_initial_layer")) + (20 if mode == "hot" else 0),
-                 first(fils[t].get("nozzle_temperature")) + (20 if mode == "hot" else 0)) for t in tools}
+    tools = sorted({p_["tool"] for o in objs for p_ in o["parts"]} | {r[2] for o in objs for r in o["ranges"]})
+    temps = {t: (first(fils[t].get("nozzle_temperature_initial_layer")) + (20 if "hot" in modes else 0),
+                 first(fils[t].get("nozzle_temperature")) + (20 if "hot" in modes else 0)) for t in tools}
     beds = [first(fils[t].get(temp_key + "_initial_layer"), first(fils[t].get(temp_key))) for t in tools]
     bed = max(beds)
     formula = "by_highest_temp" if len(tools) > 1 else "by_first_filament"
@@ -104,9 +139,12 @@ def main(argv):
             for t in tools:
                 if temps[t][1] != temps[t][0]:
                     L.append(f"M104 S{temps[t][1]:g} T{t}")
-        for o in objs:
+        for o in [dict(ob, **p_, name=ob["name"], id=ob["id"]) for ob in objs for p_ in ob["parts"]]:
             if z > o["hi"][2] + 1e-6:
                 continue
+            for (z0, z1, t_) in o["ranges"]:           # height-range modifier with a filament
+                if z0 - 1e-6 <= z < z1 - 1e-6:
+                    o["tool"] = t_
             if o["tool"] != cur:
                 L += [f"M620 S{o['tool']}A", f"T{o['tool']}", f"M104 S{temps[o['tool']][0 if n == 0 else 1]:g} T{o['tool']}",
                       f"M621 S{o['tool']}A"]
@@ -119,7 +157,7 @@ def main(argv):
             e_layer = o["model"] / nlay / area_f
             (x0, y0), (x1, y1) = o["lo"][:2] + ow / 2, o["hi"][:2] - ow / 2
             L += [f"; printing object {o['name']} id:{o['id']} copy 0", f"G1 Z{z}"]
-            if mode == "overhang" and z < o["hi"][2] - 2 * lh + 1e-6:
+            if "overhang" in modes and z < o["hi"][2] - 2 * lh + 1e-6:
                 if str(first(process.get("enable_support"), 0)).lower() in ("1", "true", "1.0"):
                     L += ["; FEATURE: Support", f"G1 X{x0:.3f} Y{y0:.3f}"]
                     yy, up = y0, True

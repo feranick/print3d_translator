@@ -1,6 +1,6 @@
 """geometry.py — the parts: load them (STEP, STL, 3MF, a build123d-translator goal or result), orient
 them, and check them before slicing (fit, closed mesh, bed contact, unsupported regions, thin walls).
-Version: 2026.10.29.2
+Version: 2026.11.11.1
 
 Units mm, Z up. A loaded part is a dict:
   tri          (n, 3, 3) triangles, oriented, base on z = 0, centred on x = y = 0
@@ -48,8 +48,28 @@ def load_part(part: dict, base_dir: str | Path | None = None) -> dict:
         tri = M.read_stl(path_of("stl"))
         return {"tri": tri, "volume": abs(M.volume(tri)), "volume_from": "mesh"}
     if "3mf" in part:
-        tri = read_3mf(path_of("3mf"))
-        return {"tri": tri, "volume": abs(M.volume(tri)), "volume_from": "mesh"}
+        from . import threemf
+        try:
+            r = threemf.read(path_of("3mf"), plate=part.get("plate"), names=part.get("objects"))
+        except threemf.ThreeMFError as e:
+            raise GeometryError(f"part.3mf: {e}") from e
+        if part.get("object_id") is not None:
+            objs = [o for o in r["objects"] if o["id"] == str(part["object_id"])
+                    and o["instance"] == int(part.get("instance", 0))]
+            if not objs:
+                raise GeometryError(f"part.3mf: object {part['object_id']} not found")
+        else:
+            objs = r["objects"]
+        parts = [{"name": q["name"] if len(objs) == 1 else f"{o['name']}/{q['name']}", "tri": q["tri"],
+                  "filament": q["filament"]}
+                 for o in objs for q in o["parts"] if q["subtype"] == threemf.SOLID and len(q["tri"])]
+        if not parts:
+            raise GeometryError("part.3mf: no solid parts selected")
+        tri = np.concatenate([q["tri"] for q in parts])
+        skipped = sorted({q["subtype"] for o in objs for q in o["parts"] if q["subtype"] != threemf.SOLID})
+        return {"tri": tri, "volume": sum(abs(M.volume(q["tri"])) for q in parts), "volume_from": "mesh",
+                "parts": parts, "settings": objs[0]["settings"] if len(objs) == 1 else {},
+                "ignored": r["ignored"] + ([f"parts of type {', '.join(skipped)} (not solids)"] if skipped else [])}
     if "step" in part:
         solid = _import_step(path_of("step"))
         return {**_from_solid(solid), "volume_from": "step"}
@@ -120,75 +140,66 @@ def _matrix(s: str | None) -> np.ndarray:
 
 
 def read_3mf(path: str | Path) -> np.ndarray:
-    """All build items of a 3MF as one triangle array (core spec + production extension components;
-    units: the model's 'unit', converted to mm)."""
-    scale = {"micron": 0.001, "millimeter": 1.0, "centimeter": 10.0, "inch": 25.4, "foot": 304.8, "meter": 1000.0}
-    with zipfile.ZipFile(path) as z:
-        models = {}
-        for n in z.namelist():
-            if n.lower().endswith(".model"):
-                models["/" + n.lstrip("/")] = ET.fromstring(z.read(n))
-    main = models.get("/3D/3dmodel.model")
-    if main is None:
-        raise GeometryError(f"{path}: not a 3MF (no 3D/3dmodel.model)")
-    unit = scale.get(main.get("unit", "millimeter"), 1.0)
-
-    def objects(root):
-        return {o.get("id"): o for o in root.iter(f"{{{_NS['m']}}}object")}
-
-    objs = {k: objects(r) for k, r in models.items()}
-
-    def tris_of(model_key, oid, T, depth=0):
-        if depth > 10:
-            raise GeometryError(f"{path}: components nested too deep")
-        o = objs[model_key].get(oid)
-        if o is None:
-            raise GeometryError(f"{path}: object {oid} not found in {model_key}")
-        out = []
-        m = o.find("m:mesh", _NS)
-        if m is not None:
-            v = np.array([[float(e.get("x")), float(e.get("y")), float(e.get("z"))]
-                          for e in m.find("m:vertices", _NS)], dtype=np.float64)
-            t = np.array([[int(e.get("v1")), int(e.get("v2")), int(e.get("v3"))]
-                          for e in m.find("m:triangles", _NS)], dtype=np.int64)
-            if len(t):
-                vh = np.c_[v, np.ones(len(v))] @ T.T
-                out.append(vh[:, :3][t])
-        comps = o.find("m:components", _NS)
-        if comps is not None:
-            for c in comps:
-                key = c.get(_P) or model_key
-                out += tris_of(key, c.get("objectid"), T @ _matrix(c.get("transform")), depth + 1)
-        return out
-
-    parts = []
-    build = main.find("m:build", _NS)
-    for item in (build if build is not None else []):
-        key = item.get(_P) or "/3D/3dmodel.model"
-        parts += tris_of(key, item.get("objectid"), _matrix(item.get("transform")))
+    """All solid parts of every build item of a 3MF as one triangle array, in mm (see threemf.py)."""
+    from . import threemf
+    try:
+        r = threemf.read(path)
+    except threemf.ThreeMFError as e:
+        raise GeometryError(str(e)) from e
+    parts = [q["tri"] for o in r["objects"] for q in o["parts"] if q["subtype"] == threemf.SOLID and len(q["tri"])]
     if not parts:
         raise GeometryError(f"{path}: the 3MF has no build items with triangles")
-    return np.concatenate(parts) * unit
+    return np.concatenate(parts)
 
 
 # ---------------------------------------------------------------- mesh quality
 
-def closedness(tri: np.ndarray, tol: float = 1e-4) -> dict:
-    """Edges shared by exactly two triangles in opposite directions = closed and consistently oriented."""
-    pts = np.round(tri.reshape(-1, 3) / tol).astype(np.int64)
-    _, inv = np.unique(pts, axis=0, return_inverse=True)
+WELD_TOL = 1e-4         # mm: vertices closer than this are the same when exact positions leave edges open
+BAD_EDGES_SOFT = 10     # up to this many non-manifold edges (no holes) is a warning, not an error
+
+
+def _edge_stats(tri: np.ndarray, tol: float | None) -> dict:
+    pts = tri.reshape(-1, 3)
+    key = pts if not tol else np.round(pts / tol).astype(np.int64)
+    uniq, first, inv = np.unique(key, axis=0, return_index=True, return_inverse=True)
     f = inv.reshape(-1, 3)
     f = f[(f[:, 0] != f[:, 1]) & (f[:, 1] != f[:, 2]) & (f[:, 0] != f[:, 2])]
     e = np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]])
     und = np.sort(e, axis=1)
-    keys, counts = np.unique(und, axis=0, return_counts=True)
-    boundary = int((counts == 1).sum())
-    nonmanifold = int((counts > 2).sum())
-    _, dcounts = np.unique(e, axis=0, return_counts=True)
-    flipped = int((dcounts > 1).sum())
+    keys, inv_e, counts = np.unique(und, axis=0, return_inverse=True, return_counts=True)
+    fwd = np.bincount(inv_e.reshape(-1), weights=(e[:, 0] < e[:, 1]).astype(float), minlength=len(keys))
+    back = counts - fwd
+    balanced = fwd == back
+    boundary = counts == 1
+    touching = (counts > 2) & balanced & (counts % 2 == 0)       # shells meeting along an edge: slicers take it
+    nonmanifold = (counts > 2) & ~touching
+    flipped = (counts == 2) & ~balanced                          # two faces walking the edge the same way
+    bad = boundary | nonmanifold | flipped
+    P = pts[first]
+    mids = (P[keys[bad, 0]] + P[keys[bad, 1]]) / 2
+    return {"boundary_edges": int(boundary.sum()), "nonmanifold_edges": int(nonmanifold.sum()),
+            "inconsistent_edges": int(flipped.sum()), "touching_edges": int(touching.sum()),
+            "bad": int(bad.sum()), "where": [[round(float(v), 3) for v in m] for m in mids[:10]]}
+
+
+def closedness(tri: np.ndarray, tol: float = WELD_TOL) -> dict:
+    """Closed and consistently oriented: every edge shared by two triangles walking it in opposite
+    directions. Vertices are compared at their exact positions first (as the slicers read them), then
+    welded within tol mm; the better answer is kept and the tolerance reported. Edges where two shells
+    touch (4 triangles, 2 each way) are allowed, as the slicers allow them. 'where': up to 10 bad edges'
+    midpoints (mm)."""
+    exact = _edge_stats(tri, None)
+    best, used = exact, 0.0
+    if exact["bad"]:
+        welded = _edge_stats(tri, tol)
+        if welded["bad"] < exact["bad"]:
+            best, used = welded, tol
     vol = M.volume(tri)
-    return {"closed": boundary == 0 and nonmanifold == 0 and flipped == 0, "boundary_edges": boundary,
-            "nonmanifold_edges": nonmanifold, "inconsistent_edges": flipped, "inverted": vol < 0}
+    out = {"closed": best["bad"] == 0, **{k: v for k, v in best.items() if k != "where"},
+           "merge_tolerance_mm": used, "inverted": vol < 0}
+    if best["bad"]:
+        out["bad_edges_at"] = best["where"]
+    return out
 
 
 # ---------------------------------------------------------------- orientation
@@ -278,7 +289,7 @@ def overhang_area(tri: np.ndarray, threshold_deg: float, tol: float = 0.05) -> f
     return float(a[steep & off_bed].sum())
 
 
-def silhouette_area(tri: np.ndarray, res: float = 0.25) -> float:
+def silhouette_area(tri: np.ndarray, res: float = 1.0) -> float:
     from .check import Footprint
     fp = Footprint(tri, res=res, pad=1.0)
     return float(fp.mask.sum() * res * res)
@@ -338,9 +349,21 @@ def checks(part: dict, bed: np.ndarray, height: float, nozzle: float, support_an
     fits = size[0] <= room[0] + 1e-6 and size[1] <= room[1] + 1e-6 and size[2] <= height + 1e-6
     out = {"fits": _c(fits, f"the part fits the {area_name} and the printable height", hard=True,
                       got=[round(float(v), 2) for v in size], expected=[round(float(room[0]), 2), round(float(room[1]), 2), height])}
-    cl = closedness(tri)
-    out["closed_mesh"] = _c(cl["closed"] and not cl["inverted"], "a closed, consistently oriented mesh (else the "
-                            "slicer guesses what is inside)", hard=part.get("volume_from") == "mesh", got=cl)
+    pieces = part.get("parts_tri") or [tri]
+    per = [closedness(t) for t in pieces]
+    cl = per[0] if len(per) == 1 else {
+        "closed": all(c["closed"] for c in per), "inverted": any(c["inverted"] for c in per),
+        **{k: sum(c[k] for c in per) for k in ("boundary_edges", "nonmanifold_edges", "inconsistent_edges",
+                                                "touching_edges", "bad")},
+        "merge_tolerance_mm": max(c["merge_tolerance_mm"] for c in per),
+        "by_part": [{k: c[k] for k in ("closed", "bad", "boundary_edges")} for c in per],
+        **({"bad_edges_at": [w for c in per for w in c.get("bad_edges_at", [])][:10]} if any(not c["closed"] for c in per) else {})}
+    holes = cl["boundary_edges"] > 0 or cl["bad"] > BAD_EDGES_SOFT or cl["inverted"]
+    out["closed_mesh"] = _c(cl["closed"] and not cl["inverted"],
+                            f"a closed, consistently oriented mesh (else the slicer guesses what is inside); vertices "
+                            f"compared exactly, then within {WELD_TOL:g} mm; shells touching along an edge are allowed; "
+                            f"up to {BAD_EDGES_SOFT} non-manifold edges and no holes is a warning",
+                            hard=part.get("volume_from") == "mesh" and holes, got=cl)
     contact = bed_contact(tri)
     sil = silhouette_area(tri)
     slender = float(size[2]) / math.sqrt(max(contact, 1e-9))

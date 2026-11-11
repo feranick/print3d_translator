@@ -1,7 +1,7 @@
 """profiles.py — OrcaSlicer system profiles: find them, index them, flatten them, choose the machine,
 process and filament profiles for a study, apply the intent and overrides, and write the flattened
 copies the OrcaSlicer CLI loads.
-Version: 2026.10.30.2
+Version: 2026.11.11.1
 
 Why we flatten: OrcaSlicer 2.4.2's --load-settings / --load-filaments read one JSON file and do not
 follow "inherits" (OrcaSlicer issue #14718): every key a leaf profile does not set silently falls back
@@ -57,6 +57,7 @@ PRESETS = {
 
 SUPPORTS = {"none": None, "auto": "normal(auto)", "tree": "tree(auto)", "needed": None}
 NEEDED_FALLBACK = "tree"    # "needed": sliced without supports; again with these if unsupported_extrusion fails
+NEEDED_FALLBACKS = ("tree", "auto")     # ... and with normal supports if tree supports make toolpaths conflict (-101)
 # filament colours when the study gives none (distinct, so flush volumes are not underestimated)
 DEFAULT_COLORS = ["#FFFFFF", "#000000", "#FF0000", "#0000FF", "#00A000", "#FFD700", "#808080", "#FF8000"]
 EXTRUDERS = {"left": 1, "right": 2}      # H2D: filament_map values (extruder_printable_area[0] is the left one)
@@ -412,7 +413,8 @@ def _as_list(v) -> list:
 
 
 INTENT_KEYS = {"preset", "process", "layer_height", "first_layer_height", "walls", "top_layers",
-               "bottom_layers", "infill", "infill_pattern", "supports", "support_angle", "brim", "seam"}
+               "bottom_layers", "infill", "infill_pattern", "supports", "support_angle", "brim", "seam",
+               "color_changes", "pauses"}
 
 
 def apply_overrides(cfg: dict, overrides: dict, where: str, others: dict[str, dict], changes: dict) -> None:

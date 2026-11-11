@@ -1,5 +1,5 @@
 """api.py — what the CLI and the MCP server call. JSON in, JSON out.
-Version: 2026.10.30.2
+Version: 2026.11.11.1
 
     tool_status()                 versions; OrcaSlicer and its profiles found or not; build123d
     study_format()                the study format (with tool_status), for the caller to read
@@ -187,6 +187,9 @@ def summarize(res: dict, path: str | None = None) -> dict:
            "expect": res.get("expect"), "slicer": res.get("slicer"), "seconds": res.get("seconds")}
     if res.get("supports_decision"):
         out["supports_decision"] = res["supports_decision"]
+    for k in ("accepted", "pauses"):
+        if res.get(k):
+            out[k] = res[k]
     return {k: v for k, v in out.items() if v not in (None, [], {})} | {"ok": res.get("ok"), "reliable": res.get("reliable")}
 
 

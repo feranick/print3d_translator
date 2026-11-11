@@ -447,3 +447,18 @@ One study = one plate. JSON, `{name: study}`. Units: mm, °C, %, mm/s.
 - 2026-10-30: **"needed" on the Mac through MCP** (run_20261030_101014_2518e4).
   - The cradle was sliced again with tree supports: reliable, +4.32 g, +19 min. The slice without supports is kept in `no_supports/`.
   - The KF16 adapter stayed without supports ("nothing has to be held up").
+- 2026-11-11: **2026.11.11.1 (193 tests pass in the sandbox; not yet run with OrcaSlicer on the Mac).** The user's A350 report (7 items).
+  - **Done in the code:**
+    1. Multi-part objects. `objects[].parts [{name, part, filament}]` → assemble_index (OrcaSlicer merges them as `assemble_N`). New `threemf.py` (fast regex reader: plates, part subtypes, part filaments, per-object settings; modifiers excluded). 3MF part filaments kept (filament_map). `from_3mf {path, plate, objects, filament_map, layout, settings}` expansion (format.expand). Per-object `settings` → print_params / assembled_params. Checks per object (layers, tools with sets, volume with internal faces cancelled, footprint, unsupported per object via supports.unsupported_groups).
+    2. `intent.color_changes [{z, filament}]` → height_ranges `extruder`; `intent.pauses [{z, note}]` inserted (machine_pause_gcode) into archive + plain G-code, md5 rewritten, hard check `pauses`.
+    3. -101: `orca.conflicts()` parses the log; `_conflict_why` names the objects and their gap. needed: tree → auto fallback (`P.NEEDED_FALLBACKS`); support_cost only when both slices are ok.
+    4. closedness: exact positions first, then a weld at 1e-4; touching shells allowed; bad-edge xyz; hard only for holes or more than 10 bad edges; checked per part.
+    5. placement.py rewritten: 0.5 mm silhouette stamps (FFT); strategies centre → bottom-left → shelves; `layout {overlap: footprint|first_layer (+3D collisions), gap, brims_may_overlap}`; overlap names the other object; +3 mm halo for supports when auto-placed.
+    7. Top sliver (section ≤ 1 mm²) → soft `top_slivers`, not a layers failure. Study-name length message.
+    6. `accept` (runner.apply_accept): unsupported_extrusion per object and z range (findings from supports.unsupported_groups), other checks whole. `accepted` is in the result and the summary.
+  - Viewer flags per object, with each object's print_params from assemble.json.
+  - Speed: prepare for A350 plate 1 (9 objects, 500k triangles) took 40 s, now 12 s. The causes were vectorized small triangles in voxelize/_raster, the threemf.read cache, and silhouette_area at 1 mm.
+  - fake_orca: comma-separated modes; assemble_index merging (union shell); height_ranges extruder; conflict / tree_conflict.
+  - **Next, on the Mac:**
+    - Check that OrcaSlicer 2.4.2 names merged objects `assemble_N` in the G-code and honours height_ranges `extruder`.
+    - Runs to try: cabin C2 with two colours (from its 3MF and from parts); A350 plate 1 via from_3mf with layout {gap: 0, brims_may_overlap: true, overlap: first_layer}; the fuselage plate with tree supports (should now get the conflict message, or fit with the support halo).

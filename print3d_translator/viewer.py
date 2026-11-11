@@ -1,7 +1,7 @@
 """viewer.py — a self-contained 3D view of a study (<name>.view.html): the placed parts on the bed and the
 toolpaths our own G-code reader found, with a layer slider and colours by feature or by filament;
 extrusion with nothing below it (supports.unsupported) is drawn red in both modes.
-Version: 2026.10.29.1
+Version: 2026.11.11.1
 
 One HTML file, no internet needed: plain WebGL2 (no libraries), the geometry and toolpaths embedded as
 zlib-compressed binary (base64) and inflated by the browser (DecompressionStream). Open it in any recent
@@ -270,8 +270,22 @@ def for_study(folder, res: dict | None = None) -> str:
     if P is not None and len(P.segments):
         from . import supports as S
         process = json.loads((d / "profiles" / "process.json").read_text())
-        sp = C.support_params(lambda k, dflt=None: process.get(k, dflt), C._f(machine.get("nozzle_diameter"), 0.4))
-        u = S.unsupported(P, sp["line_width"], sp["layer_height"], sp["angle_deg"], sp["support_spacing"])
+        plate = json.loads((d / "assemble.json").read_text())["plates"][0]
+        own = {}                                    # G-code object name -> its own settings
+        for e in plate["objects"]:
+            ai = (e.get("assemble_index") or [0])[0]
+            if not ai:
+                own[Path(e["path"]).stem + "_1"] = e.get("print_params") or {}
+        for ap in plate.get("assembled_params") or []:
+            own[f"assemble_{ap['assemble_index']}"] = ap.get("print_params") or {}
+        nozzle = C._f(machine.get("nozzle_diameter"), 0.4)
+        groups = []
+        for oi, oname in enumerate(P.objects):
+            cfg = {**process, **own.get(oname, {})}
+            sp = C.support_params(lambda k, dflt=None, c=cfg: c.get(k, dflt), nozzle)
+            groups.append((oname, P.seg_info[:, 3] == oi, (sp["line_width"], sp["layer_height"], sp["angle_deg"],
+                                                           sp["support_spacing"])))
+        u = S.unsupported_groups(P, groups)
         flags = u["flags"]
         if u["severe_mm"] > 0:
             unsup = f"{u['severe_mm']} mm unsupported (red)"

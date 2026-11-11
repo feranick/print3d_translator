@@ -87,8 +87,12 @@ Settings, read from the environment:
 |---|---|
 | `printer` | `model` (H2D, H2S, P2S), `nozzle` (mm), `plate`: `textured_pei` (default), `smooth_pei`, `engineering`, `high_temp`, `supertack`. Cool plates are refused where the printer does not support them. |
 | `filaments` | `{profile}` or `{type, brand, variant}`, `color` (`#RRGGBB`), `extruder` (`left`/`right`/`auto`, H2D). Filament n is position n. |
-| `objects` | `{name, part, filament, orient, copies, at}`. `part`: `{step}`, `{stl}`, `{3mf}`, `{goal}` or `{b3dt: {step, volume}}`. `orient`: `as_is`, `flat` (largest flat area down), or `{rotate: [rx, ry, rz]}` in degrees (X, then Y, then Z). `at`: a fixed centre `[x, y]`. |
-| `intent` | `preset` (`fine`, `standard`, `strength`, `draft`) or `process` (an exact name); `layer_height`, `first_layer_height`, `walls`, `top_layers`, `bottom_layers`, `infill`, `infill_pattern`, `supports` (`none`/`auto`/`tree`/`needed`), `support_angle`, `brim` (`none`/`auto`/mm), `seam`. |
+| `objects` | `{name, part, filament, orient, copies, at, settings}`. `part`: `{step}`, `{stl}`, `{3mf, plate, objects, filament_map}`, `{goal}` or `{b3dt: {step, volume}}`. `orient`: `as_is`, `flat` (largest flat area down), or `{rotate: [rx, ry, rz]}` in degrees (X, then Y, then Z). `at`: the centre of the object's bounding box, `[x, y]` in bed coordinates (mm). `settings`: OrcaSlicer process settings for this object only (`layer_height`, `wall_loops`, `enable_support`, `brim_width`, line widths, ...). |
+| `objects[].parts` | instead of `part`/`filament`: `[{name, part, filament}]`, several solids printed as one object (one brim, one set of supports), each with its own filament. Example: a white floor with blue seats on it. The parts keep their relative positions; `orient` and `at` move them together. |
+| `objects[].from_3mf` | `{path, plate, objects, filament_map, layout, settings}`: one study object per object of a 3MF (a Bambu Studio / OrcaSlicer project): its solid parts and their filaments, its per-object settings (`settings: "keep"`, the default, or `"drop"`), and its position on the plate (`layout: "keep"`, the default, or `"auto"`). `filament_map` `{"2": 1}` maps the project's filaments to the study's. |
+| `intent` | `preset` (`fine`, `standard`, `strength`, `draft`) or `process` (an exact name); `layer_height`, `first_layer_height`, `walls`, `top_layers`, `bottom_layers`, `infill`, `infill_pattern`, `supports` (`none`/`auto`/`tree`/`needed`), `support_angle`, `brim` (`none`/`auto`/mm), `seam`; `color_changes` `[{z, filament}]` (from height z up, every object prints with that filament: an AMS change, passed to OrcaSlicer as height-range modifiers); `pauses` `[{z, note}]` (the machine's pause G-code, `M400 U1` on Bambu printers, before the first layer above z). |
+| `layout` | `{overlap, gap, brims_may_overlap}` (see "Placement") |
+| `accept` | `[{check, object, z_range, reason}]`: findings accepted on purpose. Example: an internal floor that bridges by design inside a closed tube, where supports would be trapped. The result stays reliable and lists them in `accepted`. Only checks about print quality can be accepted (`unsupported_extrusion`, `long_bridges`, `extrusion_volume`, `layers`, `footprint`, `closed_mesh`, ...), never ones that make the file wrong (`bounds`, `temperatures`, `tools`, archive). An entry that matches nothing is a warning. |
 | `overrides` | raw OrcaSlicer keys: `{process: {...}, machine: {...}, filament: {"all"/"1"/...: {...}}}`. They are checked against OrcaSlicer's keys and types. |
 | `allow_mix_temp` | `true`: allow filaments outside each other's temperature range on one nozzle (one bed temperature for all) |
 | `expect` | `[{quantity: dotted result path, value, tol (relative, default 0.05)}]` |
@@ -104,7 +108,9 @@ Settings, read from the environment:
 
 | Key | Content |
 |---|---|
-| `supports_decision` | (`supports: "needed"`) `used` (`none` or `tree`), `why` (what had nothing below it without supports), `without_supports` (that slice's result, kept in `no_supports/`), `support_cost` (extra g and s) |
+| `supports_decision` | (`supports: "needed"`) `used` (`none`, `tree`, or `auto` when tree supports made toolpaths conflict), `tried`, `why` (what had nothing below it without supports), `without_supports` (that slice's result, kept in `no_supports/`), `support_cost` (extra g and s, when both slices succeeded) |
+| `accepted` | the `accept` entries that matched, with what they covered (layers, severe mm, z range) |
+| `pauses` | where each pause went: `{z, layer_z, line}` |
 | `ok`, `reliable`, `unreliable_because`, `warnings` | whether it sliced, whether every hard check passed (if not, do not print it), and the soft findings (OrcaSlicer's own warnings, unsupported regions, long bridges, thin walls, bed contact, shared nozzle, hot bed) |
 | `files` | `gcode_3mf` (the file to print), `gcode`, `profiles` (the flattened copies), `log`, `command` |
 | `estimate` | `time_s`, `time`, `filament_g`, `filament_m`, `by_filament`: OrcaSlicer's numbers, checked against ours |
@@ -123,7 +129,7 @@ Settings, read from the environment:
 | Check | What it verifies | Kind |
 |---|---|---|
 | `fits` | the oriented part fits the area its extruder prints and the printable height | hard |
-| `closed_mesh` | a closed, consistently oriented mesh. Hard for STL/3MF; a warning for STEP tessellations. | hard (mesh) |
+| `closed_mesh` | per part: a closed, consistently oriented mesh. Vertices are compared at their exact positions first (as the slicers read them), then merged within 1e-4 mm; `merge_tolerance_mm` says which was used. Edges where two shells touch (4 triangles, 2 each way) are allowed, as the slicers allow them. `bad_edges_at` gives up to 10 bad edges (midpoints, mm). Hard for STL/3MF with holes or more than 10 bad edges; otherwise a warning. | hard (mesh) |
 | `bed_contact` | at least 20 mm² and 5% of the footprint flat on the bed, and height / √contact ≤ 10; otherwise use a brim or another orientation | soft |
 | `unsupported_regions` | with supports `none`: nothing starts in mid-air (island) and nothing reaches more than 1 mm past the layer below on one side only (cantilever). Ceilings held on two sides are bridges and pass. The part is voxelized at the real layer heights (0.25 mm grid, coarser for big parts). A warning only: `unsupported_extrusion` on the slice decides. | soft |
 | `thin_walls` | wall thickness from rays cast inward from area-weighted surface points (fixed seed); at most 1% thinner than one line (1.125 × nozzle) | soft |
@@ -150,9 +156,9 @@ Settings, read from the environment:
 | `settings_roundtrip` | every setting OrcaSlicer knows that we wrote equals what it sliced with (`project_settings.config`). Catches the CLI's silent fallback to defaults. | hard |
 | `objects_present` | every placed object is printed, and nothing else | hard |
 | `bounds` | every extrusion of the print is inside the printable area of the extruder that prints it (H2D: left 0–325, right 25–350 mm), 0 < z ≤ height | hard |
-| `layers` | first layer = `initial_layer_print_height`, then `layer_height`; count and top match the part height | hard |
+| `layers` | per object (objects may have their own layer height): first layer = `initial_layer_print_height`, then its `layer_height`, its top at its height (± half a layer). Support-only layers (normal supports at their own heights) are counted apart. A top thinner than a printable layer (cross-section ≤ 1 mm² above the last layer, e.g. a pointed tip) is reported in the soft check `top_slivers`, not failed | hard |
 | `first_layer` | the first extrusion is at the first layer height, and every object starts on the bed | hard |
-| `tools` | each object is printed with its own filament; only the study's filaments are used | hard |
+| `tools` | each object is printed with its parts' filaments, and from each `color_change` height up with that filament; only the study's filaments are used | hard |
 | `temperatures` | nozzle and bed targets = the filament's (first layer, then the rest), within the filament's range. The bed follows OrcaSlicer's formula: `by_first_filament` = the filament active at each layer change, `by_highest_temp` = the hottest used filament. | hard |
 | `unlocated` | no extrusion of the print starts from an unknown position | hard |
 | `extrusion_volume` | per object: extruded volume vs walls + top/bottom shells + infill of its exact volume (±25%), never above 1.1 × the volume | hard |
@@ -162,6 +168,8 @@ Settings, read from the environment:
 | `travel`, `wrapping_area`, `estimates` | travel stays on the bed; nothing in the wrapping-detection zone; OrcaSlicer's filament totals equal ours (0.5% length, 2% weight). Ours include the firmware flushes on filament changes, which the G-code carries only as `;VG1 E…` comments in `VFLUSH` blocks. | soft |
 | `shared_nozzle` | (H2D) filaments whose print temperatures differ by more than 15 °C are not on the same nozzle. OrcaSlicer's auto map can put PLA and PETG on one nozzle. | soft |
 | `bed_vs_filaments` | the hottest bed of the print is not more than 10 °C above a used filament's own bed temperature. PLA + PETG on one plate gets a 70 °C bed on some or all layers. | soft |
+| `pauses` | (with `intent.pauses`) each pause once, before the first extrusion of the first layer above its height, followed by the machine's pause G-code. It is read from the final file, so the file checked is the file printed | hard |
+| `top_slivers` | parts whose top is too thin to print (see `layers`): trim them, or accept them | soft |
 | `expect` | the study's expected values | hard |
 
 **Tested on real slices.** On OrcaSlicer 2.4.2 every hard check passes for:
@@ -210,6 +218,37 @@ A benchmark passes when the result is reliable and its expected values hold.
 - **An auto brim is at most 10 mm wide, and supports stay within 5 mm of the silhouette** (`footprint`).
 - **Every filament needs a colour.** Without one, the 2.4.2 CLI crashes on 2+ filaments, so the translator always sets one.
 
+## Placement
+
+Each part takes, on a 0.5 mm grid:
+- `layout.overlap: "footprint"` (default): its silhouette seen from above;
+- `"first_layer"`: only its first-layer outline. Parts may then interleave above the bed (an arm over another part's base, as in Bambu Studio's nested layouts), and a 3D check (1 mm voxels, 1 mm clearance) makes sure they never touch.
+
+The outline grows by `gap / 2` (default gap 6 mm) plus the object's brim width (unless `brims_may_overlap: true`), plus 3 mm with supports when the translator places the part. Two grown outlines may not overlap. An overlap names the other object.
+
+`at` is the centre of the bounding box, in bed coordinates. Parts with `at` go there. The others go largest first, by the first of these strategies that places them all:
+1. nearest the centre;
+2. bottom-left (rows from the front-left);
+3. shelves (rows of bounding rectangles, tallest first).
+
+`from_3mf` with `layout: "keep"` gives every object its project position on its plate. Bambu Studio lays plates out in a grid 1.2 × the bed apart, and the translator undoes that.
+
+## 3MF files and Bambu Studio projects (`threemf.py`)
+
+- **Read:**
+  - build items and their components (parts), with transforms and units;
+  - from `Metadata/model_settings.config`: object and part names, and part types. Only normal parts are solids; modifiers, negative parts and support enforcers/blockers are left out and listed in the warnings.
+  - each part's filament (`extruder`, else its object's);
+  - per-object settings;
+  - plates (`plate: n` selects one).
+- **Ignored (listed in the warnings):**
+  - variable layer height (`layer_heights_profile.txt`);
+  - height-range modifiers (`layer_config_ranges.xml`);
+  - painted supports, seams and colours;
+  - per-part settings;
+  - the project's printer, process and filament profiles (the study's apply).
+- **Speed:** meshes are parsed with regular expressions, about 1 s per plate for the 24 MB A350 project (3.5 s for all of it).
+
 ## The 3D view
 
 `"view": true` in a study, `p3dt view STUDY_FOLDER`, or the MCP tool `make_view` writes `<name>.view.html` next to the result. It shows:
@@ -255,6 +294,7 @@ Put GUI exports (OrcaSlicer or Bambu Studio, "Export plate sliced file") in `deb
 | `gcode.py` | Read the G-code: segments with region, tool, feature, object and layer; temperatures; tool changes; header and footer. |
 | `gcode3mf.py` | Read and check the archive; compare the settings round trip; `finalize()` writes what OrcaSlicer's GUI export has and the CLI lacks. |
 | `viewer.py` | The self-contained 3D view (`<name>.view.html`). |
+| `threemf.py` | 3MF files and Bambu Studio / OrcaSlicer projects: parts, part types, filaments, per-object settings, plates. |
 | `supports.py` | Will it print without supports? `regions()` before slicing (voxels: islands, cantilevers, bridges), `unsupported()` after (G-code: extrusion with nothing below, flags for the view). |
 | `thumbs.py` | The plate pictures (isometric preview, top view, skip-object pick image), rendered from the placed meshes. |
 | `check.py` | The checks on the slice. |
@@ -302,6 +342,7 @@ OrcaSlicer's profiles are AGPL-3.0, so they are read from the installed OrcaSlic
 
 | Version | Changes |
 |---|---|
+| 2026.11.11.1 | From a real job (an A350 model, 38 parts on 6 plates): objects of several `parts`, each with its own filament (merged by OrcaSlicer through `assemble_index`); 3MF part filaments kept (`filament_map`); `from_3mf` with plate selection, project positions and per-object `settings`; `threemf.py` (about 3× faster; modifiers no longer read as solids); `intent.color_changes` and `intent.pauses` (pauses inserted into the file that is checked, MD5 rewritten, hard check `pauses`); -101 explained as OrcaSlicer's toolpath-conflict check, on any printer, naming the two objects and their gap, and `needed` falls back from tree to normal supports; `closed_mesh` compares exact positions first, allows touching shells, gives bad-edge positions, and is hard only for holes or more than 10 bad edges; placement on silhouettes with `layout` (`first_layer` + 3D check, `gap`, `brims_may_overlap`) and centre → bottom-left → shelves; `accept`; layers, tools, volume, footprint and supports checked per object with its own settings; `top_slivers`; study-name length in the validation message. |
 | 2026.10.30.2 | `intent.supports: "needed"`: slices without supports, and again with tree supports only if `unsupported_extrusion` fails. The first slice is kept in `no_supports/`; `supports_decision` in the result. fake_orca mode `overhang`. |
 | 2026.10.30.1 | Normal supports print support-only layers at their own heights (`independent_support_layer_height`): `layers` counts them apart, `unsupported_extrusion` compares with the part's previous layer plus support within 4 layer heights (was: 51 m of false "mid-air" on the cradle with normal supports). `tools/support_corpus.py` scans finished studies. |
 | 2026.10.29.2 | Support messages: "more than N mm" when the distance passes the computed window; pre-slice warnings name what they found; chamfer slivers left out of `unsupported_regions`. Checked on the Mac through MCP (cradle: none and flat unreliable, tree reliable). |
