@@ -60,7 +60,7 @@ OrcaSlicer versions are in the README; this file keeps decisions, setup, lessons
 
 - `/Applications/OrcaSlicer.app` = 2.5.1; `/Applications/OrcaSlicer-2.4.2.app` kept for comparison.
 - JSON profile tree: `~/Software/orcaslicer-src` (sparse checkout of OrcaSlicer's source, tag v2.5.1).
-  2.5 apps ship only the compiled `BBL.opc`. `P3DT_ORCA_PROFILES` points at it, set in `~/.bash_profile`
+  2.5 apps ship only the compiled `BBL.opc`. `P3DT_ORCA_PROFILES` points at it, set in `~/.profile`
   and in the p3dt entry ("env") of `claude_desktop_config.json`. Not in llm-translators' `config/env`.
 - Vendor profiles 02.08.00.16; `status` shows `profiles_version.match`.
 - The MCP server runs from the project's `.venv` (Python 3.12, build123d 0.13.0,

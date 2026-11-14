@@ -232,7 +232,7 @@ git clone --depth 1 --branch v2.5.1 --filter=blob:none --no-checkout https://git
 cd orcaslicer-src
 git sparse-checkout set --no-cone resources/profiles/BBL.json resources/profiles/BBL/ src/libslic3r/PrintConfig.cpp
 git checkout
-echo 'export P3DT_ORCA_PROFILES=$HOME/Software/orcaslicer-src/resources/profiles' >> ~/.bash_profile   # or ~/.zshrc
+echo 'export P3DT_ORCA_PROFILES=$HOME/Software/orcaslicer-src/resources/profiles' >> ~/.profile   # or ~/.bash_profile, ~/.zshrc
 ```
 
 For the MCP server, add `"env": {"P3DT_ORCA_PROFILES": "/Users/<you>/Software/orcaslicer-src/resources/profiles"}` to its entry in Claude's configuration and restart Claude.
