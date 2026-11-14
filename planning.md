@@ -3,6 +3,7 @@
 Session context. A new chat starts with "Read planning.md and start."
 Status (2026-11-14): **2026.11.14.1, complete end to end, pinned to OrcaSlicer 2.5.1, verified on the Mac
 through MCP** (bench 3/3; cabin parts, colour change + pause and A350 plate 1 reliable or accepted).
+A350 plate 1 printed successfully on the real printer.
 196 tests pass, 15 skip (sandbox). Details of the study format, the checker, placement, 3MF input and
 OrcaSlicer versions are in the README; this file keeps decisions, setup, lessons and history.
 
@@ -109,13 +110,13 @@ OrcaSlicer versions are in the README; this file keeps decisions, setup, lessons
   normalization, per-version keys) and switch; b3dt installed in `.venv`. Changelog: `CHANGES_2026-11-11.md`.
 - **2026-11-14:** OrcaSlicer 2.5.1 pinned (no relevant CLI/profile change; keys identical to 2.5.0);
   version cache per mtime; one profile checkout `orcaslicer-src`. Bench 3/3, identical to 2.5.0.
+  **A350 plate 1 printed successfully** (the first real print reported). Its remaining findings (hatch 4.75 mm
+  overhang at z 10, mid-fuselage ceiling at z 208.4, small spots at z 7.4 / 30.8 / 82.2, slivers on the rear
+  rim and hatch tip) did not affect the print: findings of this size, accepted with `accept`, are tolerable.
 
 ## Open
 
-- **A real print** of one of our `.gcode.3mf` files (preview, skip-object, the print itself) and of the
-  tree-support cradle.
-- **A350 plate 1 remaining findings** (accepted or to fix in the model): hatch 4.75 mm overhang at z 10;
-  mid-fuselage ceiling at z 208.4; small spots at z 7.4 / 30.8 / 82.2; slivers on the rear rim and hatch tip.
+- **A real print** of the tree-support cradle; preview and skip-object on the printer still to be checked.
 - A GUI multi-filament export (H2D, two filaments) to compare `filament_maps` and `layer_filament_lists`.
 - Ideas: `orient: "min_support"` (search rotations by unsupported area); suggest an orientation when supports
   are `none` and regions fail; support enforcers/blockers from flagged regions (needs painted 3MF input and a CLI spike).
