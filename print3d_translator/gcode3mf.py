@@ -1,6 +1,6 @@
 """gcode3mf.py — the Bambu .gcode.3mf archive: read it, check its structure, compare the settings it
 was sliced with against ours, and fill in what OrcaSlicer's CLI leaves out.
-Version: 2026.11.14.2
+Version: 2026.11.14.3
 
 Layout written by OrcaSlicer 2.4.2 (--export-3mf after --slice), as seen on the P2S:
   [Content_Types].xml, _rels/.rels, 3D/3dmodel.model (+ 3D/Objects/*.model without --min-save),
@@ -338,9 +338,11 @@ def finalize(path: str | Path, model_id: str | None, first_layer_s: float | None
     """Makes the CLI's archive match what OrcaSlicer's GUI exports ('Export plate sliced file', compared in
     spike S4), without touching the G-code or its md5:
       slice_info:     printer_model_id (the CLI leaves it empty); first_layer_time from the G-code header
-                      (the CLI writes 0, or garbage such as 3.07e32 on the P2S)
-      model_settings: the plate's filament_maps, thumbnail_file, thumbnail_no_light_file, top_file,
-                      pick_file and pattern_bbox_file entries
+                      (the CLI writes 0, or garbage such as 3.07e32 on the P2S); filament_maps with one value
+                      per filament (the 2.5 CLI writes '1' for two filaments, the GUI '1 1')
+      model_settings: the plate's filament_maps (one per filament), thumbnail_file, thumbnail_no_light_file,
+                      top_file, pick_file and pattern_bbox_file entries
+      project_settings: filament_map with one value per filament, as the GUI writes it
       plate_1.json:   first_layer_time
       the pictures:   plate_1.png, plate_1_small.png, plate_no_light_1.png, top_1.png, pick_1.png (thumbs.py)
     Returns {changed: [...]}. Rewrites the zip once."""
@@ -365,6 +367,10 @@ def finalize(path: str | Path, model_id: str | None, first_layer_s: float | None
         flt = 0.0
     if flt is not None:
         si = _set_meta(si, "first_layer_time", f"{flt:.6f}")
+    n_fil = _n_filaments(files.get("Metadata/project_settings.config"))
+    m = re.search(r'<metadata key="filament_maps" value="([^"]*)"', si)
+    if m and _pad_map(m.group(1).split(), n_fil):
+        si = _set_meta(si, "filament_maps", " ".join(_pad_map(m.group(1).split(), n_fil)))
     if si != si0:
         files["Metadata/slice_info.config"] = si.encode("utf-8")
         changed.append("slice_info.config")
@@ -389,9 +395,24 @@ def finalize(path: str | Path, model_id: str | None, first_layer_s: float | None
             else:
                 at, indent = plate_open, "    "
             ms = ms[:at] + "".join(f'\n{indent}<metadata key="{k}" value="{v}"/>' for k, v in want) + ms[at:]
+        ms = re.sub(r'(<metadata key="filament_maps" value=")([^"]*)(")',
+                    lambda mm: mm.group(1) + " ".join(_pad_map(mm.group(2).split(), n_fil) or mm.group(2).split())
+                    + mm.group(3), ms)
         if ms != ms0:
             files["Metadata/model_settings.config"] = ms.encode("utf-8")
             changed.append("model_settings.config")
+    pt = files.get("Metadata/project_settings.config")
+    if pt:
+        txt = pt.decode("utf-8")
+        mp = re.search(r'("filament_map": \[)([^\]]*)(\])', txt)
+        vals = re.findall(r'"([^"]*)"', mp.group(2)) if mp else []
+        padded = _pad_map(vals, n_fil)
+        if padded:
+            lead = re.match(r"\s*", mp.group(2)).group(0) or " "
+            tail = re.search(r"\s*$", mp.group(2)).group(0)
+            body = lead + ("," + lead).join(f'"{v}"' for v in padded) + tail
+            files["Metadata/project_settings.config"] = (txt[:mp.start(2)] + body + txt[mp.end(2):]).encode("utf-8")
+            changed.append("project_settings.config")
     if flt is not None and "Metadata/plate_1.json" in files:
         try:
             pj = json.loads(files["Metadata/plate_1.json"])
@@ -418,6 +439,23 @@ def finalize(path: str | Path, model_id: str | None, first_layer_s: float | None
             zout.writestr(name, files[name])
     shutil.move(str(tmp), str(path))
     return {"changed": changed}
+
+
+def _n_filaments(project: bytes | None) -> int:
+    """The number of filaments in project_settings.config (0 if unknown)."""
+    try:
+        ids = json.loads(project or b"{}").get("filament_settings_id") or []
+    except ValueError:
+        return 0
+    return len(ids) if isinstance(ids, list) else 0
+
+
+def _pad_map(vals: list[str], n: int) -> list[str] | None:
+    """A filament map shorter than the filaments, padded with its first value as OrcaSlicer reads it
+    (None when nothing changes)."""
+    if not vals or not n or len(vals) >= n:
+        return None
+    return list(vals) + [vals[0]] * (n - len(vals))
 
 
 def patch_model_id(path: str | Path, model_id: str, plate: int = 1) -> bool:

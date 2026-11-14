@@ -1,10 +1,10 @@
 # print3d_translator: planning
 
 Session context. A new chat starts with "Read planning.md and start."
-Status (2026-11-14): **2026.11.14.2, complete end to end, P2S and H2S only (H2D removed), pinned to
+Status (2026-11-14): **2026.11.14.3, complete end to end, P2S and H2S only (H2D removed), pinned to
 OrcaSlicer 2.5.1, verified on the Mac through MCP** (bench 3/3; cabin parts, colour change + pause and
 A350 plate 1 reliable or accepted). A350 plate 1 printed successfully on the real P2S.
-192 tests pass, 11 skip (sandbox). Details of the study format, the checker, placement, 3MF input and
+194 tests pass, 11 skip (sandbox). Details of the study format, the checker, placement, 3MF input and
 OrcaSlicer versions are in the README; this file keeps decisions, setup, lessons and history.
 
 ## Decisions
@@ -117,12 +117,13 @@ OrcaSlicer versions are in the README; this file keeps decisions, setup, lessons
   rim and hatch tip) did not affect the print: findings of this size, accepted with `accept`, are tolerable.
   **2026.11.14.2: H2D support removed** (only a P2S to test on); tag `h2d-last`, branch `h2d`, `docs/H2D.md`.
   `tools/compare_bambu.py` gains the multi-filament comparison and an HTML report (for a P2S GUI export).
+  **2026.11.14.3:** cabin C2 (two PLA colours) sliced in OrcaSlicer 2.5.1's GUI vs p3dt: 69 same, 4 close,
+  1 difference (`filament_maps` "1" vs the GUI's "1 1"), now padded by `finalize()` as the GUI writes it.
 
 ## Open
 
 - **A real print** of the tree-support cradle; preview and skip-object on the printer still to be checked.
-- **P2S multi-filament GUI export** (cabin C2: floor white, seats blue) compared with p3dt's with
-  `tools/compare_bambu.py --html` (filament maps, layer filament lists, tool changes, flushes, prime tower, grams).
+- **A two-colour print** of a p3dt file on the P2S (cabin C2) to confirm the AMS changes on the printer.
 - **Printer status tool** (separate, read-only, outside p3dt): to be designed.
 - Ideas: `orient: "min_support"` (search rotations by unsupported area); suggest an orientation when supports
   are `none` and regions fail; support enforcers/blockers from flagged regions (needs painted 3MF input and a CLI spike).

@@ -1,5 +1,5 @@
 """Tests of thumbs.py (plate pictures) and gcode3mf.finalize (the archive as OrcaSlicer's GUI writes it).
-Version: 2026.11.14.2
+Version: 2026.11.14.3
 """
 import json
 import struct
@@ -105,3 +105,28 @@ def test_finalize_without_header_time_resets_garbage(tmp_path):
     md = A.read(p)["slice_info"]["plates"][0]["metadata"]
     assert md["first_layer_time"] == "0.000000" and md["nozzle_volume_type"] == "0"
     assert not A.check_archive(A.read(p), None, "N7", 0.4, 1)["thumbnails"]["passed"]
+
+
+def test_finalize_pads_filament_maps_like_the_gui(tmp_path):
+    """OrcaSlicer 2.5's CLI writes filament_maps '1' for a two-filament P2S plate; the GUI writes '1 1'
+    (slice_info, model_settings and project_settings), found with tools/compare_bambu.py."""
+    p = tmp_path / "z.gcode.3mf"
+    cli_archive(p)
+    proj = '{\n\t"filament_map": [\n\t\t"1"\n\t],\n\t"filament_settings_id": [\n\t\t"a",\n\t\t"b"\n\t]\n}\n'
+    with zipfile.ZipFile(p) as z:
+        items = {n: z.read(n) for n in z.namelist()}
+    items["Metadata/project_settings.config"] = proj.encode()
+    items["Metadata/slice_info.config"] = items["Metadata/slice_info.config"].replace(
+        b'"filament_maps" value="1"', b'"filament_maps" value="1"')
+    with zipfile.ZipFile(p, "w") as z:
+        for n, b in items.items():
+            z.writestr(n, b)
+    out = A.finalize(p, "N7")
+    assert "project_settings.config" in out["changed"]
+    a = A.read(p)
+    assert a["slice_info"]["plates"][0]["metadata"]["filament_maps"] == "1 1"
+    assert a["model_settings"]["plates"][0]["filament_maps"] == "1 1"
+    assert a["project"]["filament_map"] == ["1", "1"]
+    with zipfile.ZipFile(p) as z:
+        assert '\t"filament_map": [\n\t\t"1",\n\t\t"1"\n\t],' in z.read("Metadata/project_settings.config").decode()
+    assert A.finalize(p, "N7")["changed"] == []
