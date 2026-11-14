@@ -15,9 +15,9 @@ It follows the conventions of the llm-translators family (b3dt, feat, cfdt, lmpt
 
 ## Scope
 
-- **Printers:** Bambu Lab H2D (two extruders), H2S, P2S. Nozzles 0.2, 0.4, 0.6 and 0.8 mm. Other Bambu Lab models resolve, with a warning that they are untested.
+- **Printers:** Bambu Lab P2S (tested on a real printer) and H2S, one nozzle each. Nozzles 0.2, 0.4, 0.6 and 0.8 mm. Other single-nozzle Bambu Lab models resolve, with a warning that they are untested. Multi-extruder printers (H2D) are refused: their support was removed in 2026.11.14.2 and is kept in git (tag `h2d-last`, branch `h2d`, notes in `docs/H2D.md`).
 - **Filaments:** any OrcaSlicer filament profile compatible with the printer. Tested with Bambu PLA Basic/Matte, PETG HF/Basic and Generic PLA/PETG.
-- **Multi-material:** several filaments per plate. On the H2D, each filament can go to the left or right extruder.
+- **Multi-material:** several filaments per plate through the AMS, on one nozzle (a prime tower, firmware flushes). Filaments at different temperatures need `allow_mix_temp: true`.
 - **Parts:**
   - STEP, STL or 3MF files;
   - a build123d-translator goal;
@@ -86,8 +86,8 @@ Settings, read from the environment:
 
 | Key | Meaning |
 |---|---|
-| `printer` | `model` (H2D, H2S, P2S), `nozzle` (mm), `plate`: `textured_pei` (default), `smooth_pei`, `engineering`, `high_temp`, `supertack`. Cool plates are refused where the printer does not support them. |
-| `filaments` | `{profile}` or `{type, brand, variant}`, `color` (`#RRGGBB`), `extruder` (`left`/`right`/`auto`, H2D). Filament n is position n. |
+| `printer` | `model` (P2S, H2S), `nozzle` (mm), `plate`: `textured_pei` (default), `smooth_pei`, `engineering`, `high_temp`, `supertack`. Cool plates are refused where the printer does not support them. |
+| `filaments` | `{profile}` or `{type, brand, variant}`, `color` (`#RRGGBB`; flush volumes depend on it). Filament n is position n. |
 | `objects` | `{name, part, filament, orient, copies, at, settings}`. `part`: `{step}`, `{stl}`, `{3mf, plate, objects, filament_map}`, `{goal}` or `{b3dt: {step, volume}}`. `orient`: `as_is`, `flat` (largest flat area down), or `{rotate: [rx, ry, rz]}` in degrees (X, then Y, then Z). `at`: the centre of the object's bounding box, `[x, y]` in bed coordinates (mm). `settings`: OrcaSlicer process settings for this object only (`layer_height`, `wall_loops`, `enable_support`, `brim_width`, line widths, ...). |
 | `objects[].parts` | instead of `part`/`filament`: `[{name, part, filament}]`, several solids printed as one object (one brim, one set of supports), each with its own filament. Example: a white floor with blue seats on it. The parts keep their relative positions; `orient` and `at` move them together. |
 | `objects[].from_3mf` | `{path, plate, objects, filament_map, layout, settings}`: one study object per object of a 3MF (a Bambu Studio / OrcaSlicer project): its solid parts and their filaments, its per-object settings (`settings: "keep"`, the default, or `"drop"`), and its position on the plate (`layout: "keep"`, the default, or `"auto"`). `filament_map` `{"2": 1}` maps the project's filaments to the study's. |
@@ -112,11 +112,11 @@ Settings, read from the environment:
 | `supports_decision` | (`supports: "needed"`) `used` (`none`, `tree`, or `auto` when tree supports made toolpaths conflict), `tried`, `why` (what had nothing below it without supports), `without_supports` (that slice's result, kept in `no_supports/`), `support_cost` (extra g and s, when both slices succeeded) |
 | `accepted` | the `accept` entries that matched, with what they covered (layers, severe mm, z range) |
 | `pauses` | where each pause went: `{z, layer_z, line}` |
-| `ok`, `reliable`, `unreliable_because`, `warnings` | whether it sliced, whether every hard check passed (if not, do not print it), and the soft findings (OrcaSlicer's own warnings, unsupported regions, long bridges, thin walls, bed contact, shared nozzle, hot bed) |
+| `ok`, `reliable`, `unreliable_because`, `warnings` | whether it sliced, whether every hard check passed (if not, do not print it), and the soft findings (OrcaSlicer's own warnings, unsupported regions, long bridges, thin walls, bed contact, hot bed) |
 | `files` | `gcode_3mf` (the file to print), `gcode`, `profiles` (the flattened copies), `log`, `command` |
 | `estimate` | `time_s`, `time`, `filament_g`, `filament_m`, `by_filament`: OrcaSlicer's numbers, checked against ours |
 | `objects.<name>` | `volume_mm3` (exact for STEP/b3dt), `volume_from`, `area_mm2`, `size_mm`, orientation, `centers`, `checks` (before slicing) |
-| `profiles` | `machine`, `process`, `filaments`, `set` (every value changed: `[old, new]`), `sha256`, `orca_version`, `filament_map` |
+| `profiles` | `machine`, `process`, `filaments`, `set` (every value changed: `[old, new]`), `sha256`, `orca_version` |
 | `placement` | the prime tower's position |
 | `checks` | below, each `{passed, hard, why, got, expected}` |
 | `gcode` | our own reading: layers, Z range, extrusion by filament and feature, travel range, header and footer |
@@ -129,7 +129,7 @@ Settings, read from the environment:
 
 | Check | What it verifies | Kind |
 |---|---|---|
-| `fits` | the oriented part fits the area its extruder prints and the printable height | hard |
+| `fits` | the oriented part fits the printable area and height | hard |
 | `closed_mesh` | per part: a closed, consistently oriented mesh. Vertices are compared at their exact positions first (as the slicers read them), then merged within 1e-4 mm; `merge_tolerance_mm` says which was used. Edges where two shells touch (4 triangles, 2 each way) are allowed, as the slicers allow them. `bad_edges_at` gives up to 10 bad edges (midpoints, mm). Hard for STL/3MF with holes or more than 10 bad edges; otherwise a warning. | hard (mesh) |
 | `bed_contact` | at least 20 mm² and 5% of the footprint flat on the bed, and height / √contact ≤ 10; otherwise use a brim or another orientation | soft |
 | `unsupported_regions` | with supports `none`: nothing starts in mid-air (island) and nothing reaches more than 1 mm past the layer below on one side only (cantilever). Ceilings held on two sides are bridges and pass. The part is voxelized at the real layer heights (0.25 mm grid, coarser for big parts). A warning only: `unsupported_extrusion` on the slice decides. | soft |
@@ -150,13 +150,13 @@ Settings, read from the environment:
 |---|---|---|
 | `archive_layout` | the `.gcode.3mf` holds `Metadata/plate_1.gcode`, its md5, `slice_info.config`, `model_settings.config`, `project_settings.config` | hard |
 | `md5` | `plate_1.gcode.md5` = upper-case hex MD5 of the G-code; the plain `.gcode` is the same file | hard |
-| `printer_model_id` | `slice_info.config` names the printer (H2D `O1D`, H2S `O1S`, P2S `N7`); OrcaSlicer 2.4.2 leaves it empty, so it is filled in | hard |
+| `printer_model_id` | `slice_info.config` names the printer (P2S `N7`, H2S `O1S`); OrcaSlicer 2.4.2 leaves it empty, so it is filled in | hard |
 | `slice_info_values` | `first_layer_time` is sane. On the P2S, OrcaSlicer 2.4.2 writes an uninitialised 3.07e32; it is set from the G-code header's first-layer estimate. | soft |
 | `thumbnails` | the plate pictures are present, as OrcaSlicer's GUI writes them (rendered by `thumbs.py`) | soft |
-| `nozzle_diameters`, `filament_map` | `slice_info` has the study's nozzle and filament → extruder map | hard |
+| `nozzle_diameters` | `slice_info` has the study's nozzle | hard |
 | `settings_roundtrip` | every setting OrcaSlicer knows that we wrote equals what it sliced with (`project_settings.config`). Catches the CLI's silent fallback to defaults. | hard |
 | `objects_present` | every placed object is printed, and nothing else | hard |
-| `bounds` | every extrusion of the print is inside the printable area of the extruder that prints it (H2D: left 0–325, right 25–350 mm), 0 < z ≤ height | hard |
+| `bounds` | every extrusion of the print is inside the printable area, 0 < z ≤ height | hard |
 | `layers` | per object (objects may have their own layer height): first layer = `initial_layer_print_height`, then its `layer_height`, its top at its height (± half a layer). Support-only layers (normal supports at their own heights) are counted apart. A top whose next layer would be thinner than a line (a pointed tip or a knife-edge rim, which the slicer cannot print) is reported in the soft check `top_slivers`, not failed | hard |
 | `first_layer` | the first extrusion is at the first layer height, and every object starts on the bed | hard |
 | `tools` | each object is printed with its parts' filaments, and from each `color_change` height up with that filament; only the study's filaments are used | hard |
@@ -167,16 +167,17 @@ Settings, read from the environment:
 | `unsupported_extrusion` | every extrusion of the parts rests on the layer below, or on support up to 3 layers below. "Rests" means within reach = half a line + `layer_height` / tan(`support_angle`), 0.556 mm at 0.42 / 0.2 / 30°. What a layer offers the next is its area (perimeters filled) and its support lines with their spacing filled. An unsupported stretch held at both ends and about straight is a bridge and passes. Fails when more than 5 mm of extrusion lies more than 1 mm beyond reach; says where (z, xy, object), whether it starts in mid-air, and the fix. | hard |
 | `long_bridges` | bridges up to 15 mm (longer ones sag) | soft |
 | `travel`, `wrapping_area`, `estimates` | travel stays on the bed; nothing in the wrapping-detection zone; OrcaSlicer's filament totals equal ours (0.5% length, 2% weight). Ours include the firmware flushes on filament changes, which the G-code carries only as `;VG1 E…` comments in `VFLUSH` blocks. | soft |
-| `shared_nozzle` | (H2D) filaments whose print temperatures differ by more than 15 °C are not on the same nozzle. OrcaSlicer's auto map can put PLA and PETG on one nozzle. | soft |
 | `bed_vs_filaments` | the hottest bed of the print is not more than 10 °C above a used filament's own bed temperature. PLA + PETG on one plate gets a 70 °C bed on some or all layers. | soft |
 | `pauses` | (with `intent.pauses`) each pause once, before the first extrusion of the first layer above its height, followed by the machine's pause G-code. It is read from the final file, so the file checked is the file printed | hard |
 | `top_slivers` | parts whose top is too thin to print (see `layers`): trim them, or accept them | soft |
 | `expect` | the study's expected values | hard |
 
-**Tested on real slices.** On OrcaSlicer 2.4.2 every hard check passes for:
-- the spike cases: P2S cube; H2D PLA+PLA, PLA+PETG, PETG+PETG;
+**Tested on real slices.** On OrcaSlicer 2.4.2 and 2.5 every hard check passes for:
+- the spike cases (P2S cube; two colours; PLA+PETG);
 - the benchmarks;
-- `examples/studies.json`: P2S cube, H2S PETG copies, H2D two colours, P2S PLA+PETG with `allow_mix_temp` and a prime tower.
+- `examples/studies.json`: P2S cube, H2S PETG copies, P2S two colours, P2S PLA+PETG with `allow_mix_temp` and a prime tower.
+
+**Printed:** A350 plate 1 on the P2S (2026-11-14).
 
 On those slices:
 - filament totals match OrcaSlicer's to 0.01 mm, including 6.26 m of firmware flush on the P2S;
@@ -187,7 +188,7 @@ On those slices:
 Ten deliberate faults were each caught by the expected check: a part moved by 5 mm, a stray blob, a move off the bed, a dropped layer, a wrong nozzle or bed temperature, swapped filaments, and a study asking for other layers or walls.
 
 **b3dt → p3dt chain** (2026-10-24, on the Mac): parts built by build123d-translator's MCP server, given to p3dt as `{b3dt: {step, volume}}`. All reliable:
-- the bracket (49,069.8 mm³) on the P2S, H2S and H2D: 135 layers, 21.0 g, extruded volume 0.993 of the model;
+- the bracket (49,069.8 mm³) on the P2S and H2S: 135 layers, 21.0 g, extruded volume 0.993 of the model;
 - the shelf (a 25 × 20 mm overhang at z = 25):
   - without supports, the 500 mm² underside was reported (as `overhang` then; now `unsupported_regions` and `unsupported_extrusion`);
   - with tree supports, 1438 mm³ of support from z 0.2 to 24.8, all within the part's silhouette.
@@ -206,16 +207,16 @@ Ten deliberate faults were each caught by the expected check: a part moved by 5 
 **Benchmarks** (`p3dt bench`, on generated boxes with exact volumes):
 - `p2s_cube`: 20 mm PLA cube, 100 layers, 8000 mm³;
 - `h2s_fine_copies`: three PETG slabs, fine preset, 3 mm brim;
-- `h2d_two_filaments`: PLA left + PETG right, prime tower.
+- `p2s_two_filaments`: two PLA colours (AMS), prime tower.
 
 A benchmark passes when the result is reliable and its expected values hold.
 
 ### Assumptions about OrcaSlicer (each with what would catch it)
 
 - **The flattened profile equals the GUI's.** Child keys replace parent keys whole, root first (`settings_roundtrip`).
-- **A locked plate keeps our positions** (assemble list, `need_arrange: false`). Seen on the P2S and H2D (`footprint`, `bounds`).
+- **A locked plate keeps our positions** (assemble list, `need_arrange: false`) (`footprint`, `bounds`).
 - **The CLI keeps a prime tower position given in `wipe_tower_x/y`** (`footprint` checks the tower against its declared box, `bounds` against the bed).
-- **On the H2D, `M620.10 A1 … P` is the incoming filament's print temperature** (`temperatures`).
+- **`M620.10 A1 … P` is the incoming filament's print temperature** on a filament change (`temperatures`).
 - **An auto brim is at most 10 mm wide** (`footprint`). Support beyond 5 mm of the silhouette (tall tree supports lean out by 25 mm or more) is reported in `footprint.got.support_beyond_margin`, not failed: OrcaSlicer itself stops (-101) when support reaches another part.
 - **Every filament needs a colour.** Without one, the 2.4.2 CLI crashes on 2+ filaments, so the translator always sets one.
 
@@ -293,16 +294,19 @@ It is one HTML file with no libraries and nothing loaded from the internet: plai
 
 ## Comparing with a GUI export (S4)
 
-`tools/compare_bambu.py BAMBU.gcode.3mf OURS.gcode.3mf` lists what Bambu Studio's export has that ours lacks, or has differently: archive members, `slice_info` metadata and filament attributes, `model_settings`, `plate_1.json`, project-settings keys, the G-code header and thumbnails.
+`tools/compare_bambu.py GUI.gcode.3mf OURS.gcode.3mf [--out report.json] [--html report.html]` compares a plate exported by OrcaSlicer's or Bambu Studio's GUI with p3dt's for the same plate, and writes a JSON report and a self-contained HTML page (default: next to the GUI file, `<name>.compare.json` / `.compare.html`):
+- **packaging** (S4): archive members, `slice_info` metadata and filament attributes, `model_settings`, `plate_1.json`, project-settings keys, the G-code header and thumbnails;
+- **multi-filament** (P2S + AMS): each filament's type, colour, grams and metres; `filament_maps` and `layer_filament_lists` (`slice_info`); `filament_sequence.json`; the tool changes and the filaments printed on each layer, read from the G-code (and checked against each archive's own `layer_filament_lists`); firmware flushes per filament; the prime tower (size; volume per filament); nozzle and bed temperatures; the multi-filament settings (flush matrix, prime tower, colours). Each row is `same`, `close` (within tolerance: 3% for grams and metres, 5% for flushes, volumes and time, 1 mm for the tower), `differs`, or `info` (expected to differ: positions, object names). The page draws the filaments per layer of both files with the tool changes.
+
+To make the GUI file for a two-colour P2S plate: open the project (or import the parts as one object), choose the same printer, process, filaments with the same colours, plate, supports and brim as the p3dt study, slice, and "Export plate sliced file" into `debug/bambu/`.
 
 Put GUI exports (OrcaSlicer or Bambu Studio, "Export plate sliced file") in `debug/bambu/` (not committed). They contain Bambu's start G-code.
 
-**Result** (2026-10-24, the bracket sliced by OrcaSlicer 2.4.2's GUI vs our CLI run, P2S and H2D):
+**Result** (2026-10-24, the bracket sliced by OrcaSlicer 2.4.2's GUI vs our CLI run, P2S):
 - **The G-code is equivalent:** same placement, same 135 layers, the same extruded volume per feature to 1 mm³, and settings identical apart from list padding. Ours has more, shorter moves, because our STL is tessellated more finely.
 - **The archives differed only in packaging.** `gcode3mf.finalize()` now writes what the GUI writes:
   - `printer_model_id`;
   - `first_layer_time` (from the G-code header);
-  - `nozzle_volume_type` with one value per extruder (H2D `"0 0"`);
   - the `model_settings` plate entries (`filament_maps`, `thumbnail_file`, `thumbnail_no_light_file`, `top_file`, `pick_file`, `pattern_bbox_file`);
   - the five plate pictures.
 - **The pictures** (`thumbs.py`, numpy z-buffer):
@@ -319,8 +323,8 @@ Put GUI exports (OrcaSlicer or Bambu Studio, "Export plate sliced file") in `deb
 |---|---|
 | `profiles.py` | Find OrcaSlicer's profiles; pick machine, process (preset → nearest layer height), filaments (by `compatible_printers`); flatten (OrcaSlicer 2.4.2's CLI ignores `inherits`, issue #14718); apply the plate, intent, overrides (typed against `data/orca_keys.json`) and colours; write canonical copies with sha256. |
 | `geometry.py` | Load STEP / b3dt (build123d, exact volume; tessellated at 0.01 mm), STL, 3MF (with components); orient; check before slicing. |
-| `placement.py` | Place the parts and the prime tower on a 1 mm grid. Each part stays inside the area its extruder prints and outside the wrapping zone, with a halo for brim and gap. Fixed `at` positions are kept, the largest part goes nearest the centre, and the tower goes in a back corner. |
-| `orca.py` | Find OrcaSlicer and its version. Build the command (assemble list, bed type, filament map, `--allow-mix-temp`). Run it in its own process group with a timeout and a cancel file. Decode the exit codes. |
+| `placement.py` | Place the parts and the prime tower on a 1 mm grid. Each part stays on the bed and outside the wrapping zone, with a halo for brim and gap. Fixed `at` positions are kept, the largest part goes nearest the centre, and the tower goes in a back corner. |
+| `orca.py` | Find OrcaSlicer and its version. Build the command (assemble list, bed type, `--allow-mix-temp`). Run it in its own process group with a timeout and a cancel file. Decode the exit codes. |
 | `gcode.py` | Read the G-code: segments with region, tool, feature, object and layer; temperatures; tool changes; header and footer. |
 | `gcode3mf.py` | Read and check the archive; compare the settings round trip; `finalize()` writes what OrcaSlicer's GUI export has and the CLI lacks. |
 | `viewer.py` | The self-contained 3D view (`<name>.view.html`). |
@@ -344,7 +348,7 @@ Put GUI exports (OrcaSlicer or Bambu Studio, "Export plate sliced file") in `deb
 The instructions tell the model to:
 - check `reliable` before using a result;
 - give every filament a colour;
-- put filaments with different temperatures on separate H2D nozzles;
+- set `allow_mix_temp` only for filaments at different temperatures on purpose;
 - stop polling runs that take more than about 5 minutes.
 
 `run_studies` and `study_status` return a summary per study (about 3 kB): the verdict, warnings, files, estimate, profiles, objects, the failed checks in full and the passed ones by name. The full result stays on disk (`result`). `p3dt run` prints the same summary; `--full` prints everything.
@@ -360,7 +364,9 @@ Claude desktop config:
 ```
 print3d_translator/   profiles.py geometry.py placement.py orca.py gcode.py gcode3mf.py check.py
                       format.py runner.py api.py cli.py mcp_server.py mesh.py data/orca_keys.json
-tools/                orca_keys.py (key data from OrcaSlicer's PrintConfig.cpp), spike.py (real-CLI experiments)
+tools/                orca_keys.py (key data from OrcaSlicer's PrintConfig.cpp), spike.py (real-CLI experiments),
+                      compare_bambu.py (GUI export vs p3dt, HTML report), support_corpus.py
+docs/H2D.md           the removed H2D support: what it was, what was learned, how to bring it back
 tests/                fixtures/profiles (hand-written), fake_orca.py, test_*.py
 examples/studies.json
 planning.md           session context and state log
@@ -372,12 +378,13 @@ OrcaSlicer's profiles are AGPL-3.0, so they are read from the installed OrcaSlic
 
 | Version | Changes |
 |---|---|
+| 2026.11.14.2 | **H2D support removed** (only the P2S can be tested here). A multi-extruder printer is refused with a clear message; `filaments[].extruder`, the filament → extruder map, per-extruder areas (placement and `bounds`), `shared_nozzle`, the `filament_map` archive check and the per-extruder `nozzle_volume_type` are gone. The last version with H2D is the git tag `h2d-last` (branch `h2d`); `docs/H2D.md` lists what was removed and what was learned. Benchmark `h2d_two_filaments` → `p2s_two_filaments`. `tools/compare_bambu.py`: multi-filament comparison (filament maps, layer filament lists, tool changes, flushes, prime tower, grams, settings) with a verdict per row, and an HTML report. |
 | 2026.11.14.1 | Pinned to OrcaSlicer 2.5.1 (Bambu vendor profiles unchanged: 02.08.00.16). The OrcaSlicer version is cached per executable and its modification time, so a running MCP server sees an update. One version-independent profile checkout (`~/Software/orcaslicer-src`, switched by tag); update procedure in "OrcaSlicer versions". |
 | 2026.11.11.7 | `status` shows the Python in use and, when build123d-translator is missing from it, how to install it there (the MCP server runs from the project's `.venv`, not the shell's Python). |
 | 2026.11.11.6 | Pinned to OrcaSlicer 2.5.0 (2.4.2's setting names kept in `data/orca_keys-2.4.2.json`). `status` and every run compare the vendor version of the JSON profiles read with the installed OrcaSlicer's (its compiled `BBL.opc`), and warn on a mismatch. Verified on the Mac: bench 3/3 on 2.5.0 and 2.4.2; the cabin plates, the colour change with a pause, and A350 plate 1 give the same results on both. |
 | 2026.11.11.5 | OrcaSlicer 2.5 support:
 - **Profile `include` templates** are flattened. At each level they override what is inherited, and the profile's own keys override them. Without this, 2.5's P2S profile fell back to a generic start G-code with no AMS filament load.
-- **Idle-nozzle pre-heating and pre-cooling** (`M104 T<nozzle> S.. N0`, H2D) is read as `nozzle_standby`, not as a printing temperature.
+- **Idle-nozzle pre-heating and pre-cooling** (`M104 T<nozzle> S.. N0`) is read as `nozzle_standby`, not as a printing temperature.
 - **Settings round-trip:** `100` = `100%`; a yes/no turned into a choice (`0` = `disabled`); per-filament lists written back to back; profile values that OrcaSlicer's own definitions reject are reported in `normalized_by_orca`, not failed. |
 | 2026.11.11.4 | Toward OrcaSlicer 2.5: setting names per OrcaSlicer version (`data/orca_keys-<version>.json`, `tools/orca_keys.py PrintConfig.cpp <version>`); a clear error when an install ships only compiled profiles (`.opc`). |
 | 2026.11.11.3 | A given OrcaSlicer uses only its own profiles (with OrcaSlicer 2.5.0 the profiles of the 2.4.2 install were picked up silently). |

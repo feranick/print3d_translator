@@ -1,5 +1,5 @@
 """placement.py — puts the oriented parts and the prime tower on the plate, deterministically.
-Version: 2026.11.11.1
+Version: 2026.11.14.2
 
 OrcaSlicer's arrange is a heuristic and its default prime-tower position (165, 250) is off the P2S
 bed, so we place everything ourselves and lock the plate (need_arrange false).
@@ -12,14 +12,14 @@ What a part takes on the plate (its "stamp"), on a 0.5 mm grid:
 grown by its halo = half the gap between parts (gap / 2, default 3 mm) + its brim width (unless
 layout.brims_may_overlap) + 3 mm with supports on (supports spread past the silhouette; OrcaSlicer
 stops with "G-code paths conflict" when they reach another part). Two stamps may not overlap: two
-parts end at least halo_a + halo_b apart. Stamps must lie inside the area their extruder prints (H2D:
-left 0-325, right 25-350 mm) and outside the machine's wrapping-detection zone.
+parts end at least halo_a + halo_b apart. Stamps must lie inside the printable area and outside the
+machine's wrapping-detection zone.
 
 'at' [x, y] is the centre of the part's bounding box, in bed coordinates (mm). Parts with 'at' go there
 first (an overlap names the other part). The others go largest first by one of these strategies, the
-first that places them all: nearest the centre of their area; bottom-left (rows from the front-left);
+first that places them all: nearest the centre of the bed; bottom-left (rows from the front-left);
 shelves (rows of bounding rectangles, tallest first). With two or more filaments the prime tower is
-reserved first, in a back corner reachable by every extruder used; process wipe_tower_x/y is its corner.
+reserved first, in a back corner; process wipe_tower_x/y is its corner.
 Positions are rounded to 0.1 mm.
 """
 from __future__ import annotations
@@ -121,12 +121,10 @@ def stamp(tri: np.ndarray, halo: float, base: np.ndarray | None = None) -> tuple
     return m, slo - c
 
 
-def place(items: list[dict], bed: np.ndarray, areas: list[np.ndarray] | None = None,
-          tower: dict | None = None, exclude: np.ndarray | None = None, overlap: str = "footprint",
+def place(items: list[dict], bed: np.ndarray, tower: dict | None = None, exclude: np.ndarray | None = None, overlap: str = "footprint",
           first_layer: float = 0.2) -> dict:
-    """items: [{id, tri (oriented, bounding box centred at 0, 0), halo (mm), extruders: [1-based] or None
-    (any), at: [x, y] or None}]. bed: (n, 2) rectangle. areas: per-extruder rectangles (H2D) or None.
-    tower: {w, d, halo, extruders} or None. exclude: a rectangle to keep clear (wrapping zone).
+    """items: [{id, tri (oriented, bounding box centred at 0, 0), halo (mm), at: [x, y] or None}].
+    bed: (n, 2) rectangle. tower: {w, d, halo} or None. exclude: a rectangle to keep clear (wrapping zone).
     Returns {placed: {id: {center, tri}}, tower: {x, y, rect} or None, strategy, collisions_checked}."""
     blo, bhi = bed.min(axis=0), bed.max(axis=0)
     shape = (int(np.floor((bhi[1] - blo[1]) / RES)) + 1, int(np.floor((bhi[0] - blo[0]) / RES)) + 1)
@@ -139,7 +137,7 @@ def place(items: list[dict], bed: np.ndarray, areas: list[np.ndarray] | None = N
     last_err = None
     for strategy in ("centre", "bottom-left", "shelves"):
         try:
-            out = _place(items, stamps, bed, blo, bhi, shape, areas, tower, exclude, strategy)
+            out = _place(items, stamps, bed, blo, bhi, shape, tower, exclude, strategy)
         except PlacementError as e:
             if "no room left" not in str(e):
                 raise
@@ -158,24 +156,15 @@ def place(items: list[dict], bed: np.ndarray, areas: list[np.ndarray] | None = N
     raise last_err
 
 
-def _place(items, stamps, bed, blo, bhi, shape, areas, tower, exclude, strategy) -> dict:
+def _place(items, stamps, bed, blo, bhi, shape, tower, exclude, strategy) -> dict:
     from scipy.signal import fftconvolve
     owner = np.full(shape, -1, dtype=np.int32)          # index of the item (or -2 tower, -3 keep-out)
     if exclude is not None and len(exclude):
         owner[_rect(exclude.min(axis=0), exclude.max(axis=0), blo, shape)] = -3
     names = [it["id"] for it in items]
 
-    def allowed(extruders):
-        lo, hi = area_of(extruders)
-        return _rect(lo, hi, blo, shape)
-
-    def area_of(extruders):
-        lo, hi = blo.copy(), bhi.copy()
-        if areas and extruders:
-            for e in extruders:
-                lo = np.maximum(lo, areas[e - 1].min(axis=0))
-                hi = np.minimum(hi, areas[e - 1].max(axis=0))
-        return lo, hi
+    on_bed = _rect(blo, bhi, blo, shape)
+    alo, ahi = blo, bhi
 
     out = {"placed": {}, "tower": None}
 
@@ -195,19 +184,18 @@ def _place(items, stamps, bed, blo, bhi, shape, areas, tower, exclude, strategy)
         jj, ii = np.nonzero(hits < 0.5)
         return blo[0] + ii * RES - off[0], blo[1] + jj * RES - off[1]
 
-    # fixed parts first: inside their area, and not on anything
+    # fixed parts first: on the bed, and not on anything
     k_of = {it["id"]: k for k, it in enumerate(items)}
     for it in [it for it in items if it.get("at") is not None]:
         m, off = stamps[it["id"]]
         c = np.asarray(it["at"], dtype=float)
         cl = [round(float(v), 1) for v in c]
-        alo, ahi = area_of(it.get("extruders"))
         sl = stamp_at(m, off, c)
         lo_s, hi_s = c + off, c + off + np.array([m.shape[1], m.shape[0]]) * RES
-        inside = sl is not None and not (m & ~allowed(it.get("extruders"))[sl]).any()
+        inside = sl is not None and not (m & ~on_bed[sl]).any()
         if not inside:
             raise PlacementError(f"object {it['id']}: at {cl} puts it (with {it['halo']:g} mm around for brim and gap) "
-                                 f"outside the area its extruder prints, x {alo[0]:g}-{ahi[0]:g}, y {alo[1]:g}-{ahi[1]:g} "
+                                 f"outside the printable area, x {alo[0]:g}-{ahi[0]:g}, y {alo[1]:g}-{ahi[1]:g} "
                                  f"(its outline spans x {lo_s[0]:.1f}-{hi_s[0]:.1f}, y {lo_s[1]:.1f}-{hi_s[1]:.1f})")
         hit = owner[sl][m]
         hit = hit[hit != -1]
@@ -220,13 +208,12 @@ def _place(items, stamps, bed, blo, bhi, shape, areas, tower, exclude, strategy)
         owner[sl][m] = k_of[it["id"]]
         out["placed"][it["id"]] = {"center": cl, "tri": M.transform(it["tri"], None, (c[0], c[1], 0.0))}
 
-    # the prime tower: a back corner reachable by every extruder used
+    # the prime tower: a back corner
     if tower:
         w = tower["w"] + 2 * tower["halo"]
         d = tower["d"] + 2 * tower["halo"]
         m = np.ones((int(np.ceil(d / RES)), int(np.ceil(w / RES))), dtype=bool)
-        alo, ahi = area_of(tower.get("extruders"))
-        cx, cy = free_centres(m, np.array([-w / 2, -d / 2]), allowed(tower.get("extruders")))
+        cx, cy = free_centres(m, np.array([-w / 2, -d / 2]), on_bed)
         if not len(cx):
             raise PlacementError("no room for the prime tower: fewer objects, or one filament")
         mid = (alo[0] + ahi[0]) / 2
@@ -252,12 +239,11 @@ def _place(items, stamps, bed, blo, bhi, shape, areas, tower, exclude, strategy)
     for it in order:
         m, off = stamps[it["id"]]
         sz = size(it)
-        alo, ahi = area_of(it.get("extruders"))
         if sz[0] + 2 * it["halo"] > ahi[0] - alo[0] + 1e-6 or sz[1] + 2 * it["halo"] > ahi[1] - alo[1] + 1e-6:
             raise PlacementError(f"object {it['id']}: {sz[0]:.1f} x {sz[1]:.1f} mm (+ {it['halo']:g} mm around) does not "
-                                 f"fit the area its extruder prints ({ahi[0] - alo[0]:g} x {ahi[1] - alo[1]:g} mm): "
+                                 f"fit the printable area ({ahi[0] - alo[0]:g} x {ahi[1] - alo[1]:g} mm): "
                                  f"rotate it, scale it, or use a larger printer")
-        cx, cy = free_centres(m, off, allowed(it.get("extruders")))
+        cx, cy = free_centres(m, off, on_bed)
         if not len(cx):
             raise PlacementError(f"no room left on the plate for object {it['id']}: fewer copies, smaller parts, "
                                  f"layout.overlap 'first_layer' for nested parts, or a second plate (a second study)")

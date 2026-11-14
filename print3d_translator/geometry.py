@@ -1,6 +1,6 @@
 """geometry.py — the parts: load them (STEP, STL, 3MF, a build123d-translator goal or result), orient
 them, and check them before slicing (fit, closed mesh, bed contact, unsupported regions, thin walls).
-Version: 2026.11.11.1
+Version: 2026.11.14.2
 
 Units mm, Z up. A loaded part is a dict:
   tri          (n, 3, 3) triangles, oriented, base on z = 0, centred on x = y = 0
@@ -338,8 +338,8 @@ def thin_walls(tri: np.ndarray, limit: float, samples: int = 1500, seed: int = 0
 def checks(part: dict, bed: np.ndarray, height: float, nozzle: float, support_angle: float, supports: str,
            area_name: str = "printable area", layer_height: float = 0.2, first_layer: float = 0.2,
            line_width: float | None = None) -> dict:
-    """Checks before slicing for one oriented part (base on z = 0). bed: the (n, 2) area its extruder
-    can print (rectangle). Hard: fits, closed. Soft: bed_contact, unsupported_regions, thin_walls.
+    """Checks before slicing for one oriented part (base on z = 0). bed: the (n, 2) printable area
+    (rectangle). Hard: fits, closed. Soft: bed_contact, unsupported_regions, thin_walls.
     (The G-code check unsupported_extrusion decides; unsupported_regions warns before slicing.)"""
     tri = part["tri"]
     lo, hi = M.bbox(tri)

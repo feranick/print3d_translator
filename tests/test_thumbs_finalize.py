@@ -1,5 +1,5 @@
 """Tests of thumbs.py (plate pictures) and gcode3mf.finalize (the archive as OrcaSlicer's GUI writes it).
-Version: 2026.10.24.9
+Version: 2026.11.14.2
 """
 import json
 import struct
@@ -55,12 +55,12 @@ def test_render_shades_by_light():
     assert {tuple(p[:3]) for p in flat[flat[..., 3] == 255]} == {(128, 128, 128)}
 
 
-def cli_archive(path, extruders=1):
+def cli_archive(path):
     si = ('<?xml version="1.0" encoding="UTF-8"?>\n<config>\n  <plate>\n    <metadata key="index" value="1"/>\n'
           '    <metadata key="printer_model_id" value=""/>\n'
           f'    <metadata key="nozzle_volume_type" value="0"/>\n'
           '    <metadata key="first_layer_time" value="307348170571033591697770805198848.000000"/>\n'
-          '    <metadata key="filament_maps" value="2"/>\n'
+          '    <metadata key="filament_maps" value="1"/>\n'
           '    <object identify_id="92" name="part_1" skipped="false" />\n  </plate>\n</config>\n')
     ms = ('<?xml version="1.0" encoding="UTF-8"?>\n<config>\n  <plate>\n    <metadata key="plater_id" value="1"/>\n'
           '    <metadata key="gcode_file" value="Metadata/plate_1.gcode"/>\n    <model_instance>\n'
@@ -79,21 +79,21 @@ def test_finalize_matches_the_gui(tmp_path):
     p = tmp_path / "x.gcode.3mf"
     g = cli_archive(p)
     imgs = thumbs.render([{"tri": M.place(M.box(10, 10, 10), (100, 100)), "color": "#00FF00", "identify_id": 92}], BED)
-    out = A.finalize(p, "O1D", extruders=2, first_layer_s=313.0, images=imgs)
+    out = A.finalize(p, "N7", first_layer_s=313.0, images=imgs)
     assert set(out["changed"]) == {"slice_info.config", "model_settings.config", "plate_1.json", "thumbnails"}
     a = A.read(p)
     md = a["slice_info"]["plates"][0]["metadata"]
-    assert md["printer_model_id"] == "O1D" and md["first_layer_time"] == "313.000000"
-    assert md["nozzle_volume_type"] == "0 0"
+    assert md["printer_model_id"] == "N7" and md["first_layer_time"] == "313.000000"
+    assert md["nozzle_volume_type"] == "0"
     ms = a["model_settings"]["plates"][0]
     assert ms["thumbnail_file"] == "Metadata/plate_1.png" and ms["pick_file"] == "Metadata/pick_1.png"
     assert ms["top_file"] == "Metadata/top_1.png" and ms["thumbnail_no_light_file"] == "Metadata/plate_no_light_1.png"
-    assert ms["filament_maps"] == "2" and ms["pattern_bbox_file"] == "Metadata/plate_1.json"
+    assert ms["filament_maps"] == "1" and ms["pattern_bbox_file"] == "Metadata/plate_1.json"
     assert a["plate_json"]["first_layer_time"] == 313.0
     assert a["gcode"] == g and a["md5_file"] == A.md5_upper(g)
-    c = A.check_archive(a, g, "O1D", 0.4, 1)
+    c = A.check_archive(a, g, "N7", 0.4, 1)
     assert c["thumbnails"]["passed"] and c["slice_info_values"]["passed"] and c["printer_model_id"]["passed"]
-    assert A.finalize(p, "O1D", 2, 313.0, imgs)["changed"] == []          # idempotent
+    assert A.finalize(p, "N7", 313.0, imgs)["changed"] == []          # idempotent
     with zipfile.ZipFile(p) as z:
         assert len(z.namelist()) == len(set(z.namelist()))
 

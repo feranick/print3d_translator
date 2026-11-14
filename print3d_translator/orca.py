@@ -1,6 +1,6 @@
 """orca.py — the OrcaSlicer command line: find it, tell its version, build the command, run it in its
 own process group with a timeout and a cancel flag, and decode its exit status.
-Version: 2026.11.14.1
+Version: 2026.11.14.2
 
 The translator never asks OrcaSlicer to do anything but slice files: no printer, network or cloud
 options are ever passed. Geometry comes in through an assemble list (--load-assemble-list): one STL
@@ -51,11 +51,9 @@ EXIT_FIXES = {
     -61: "a filament does not suit the plate: choose another printer.plate",
     -62: "the filaments' temperatures are too far apart to print together",
     -64: "objects collide: give them more room",
-    -66: "a filament cannot be mapped to an extruder: set filaments[].extruder",
-    -68: "a filament is not supported by its extruder: assign it to the other extruder",
     -101: "the toolpaths of two objects cross on some layer (OrcaSlicer's conflict check, on any printer): "
           "usually one part's supports or brim reaching another part; move them apart",
-    -102: "G-code in an area one extruder cannot reach: move the objects, or assign the filament to the other extruder",
+    -102: "G-code outside the printable area: move the objects (or the prime tower) inside the bed",
 }
 
 _MAC_APPS = ["/Applications/OrcaSlicer.app/Contents/MacOS/OrcaSlicer",
@@ -167,7 +165,7 @@ def conflicts(log_text: str) -> list[tuple[str, str]]:
 
 
 def command(exe: str, folder: Path, machine: str, process: str, filaments: list[str], assemble: str,
-            bed_type: str, filament_map: list[int] | None = None, out_name: str = "plate.gcode.3mf",
+            bed_type: str, out_name: str = "plate.gcode.3mf",
             min_save: bool = False, debug: int = 3) -> list[str]:
     """The argument list. Boolean flags take no value (a value after them would be read as an input
     file); --export-3mf takes a name relative to --outputdir."""
@@ -181,8 +179,6 @@ def command(exe: str, folder: Path, machine: str, process: str, filaments: list[
             "--export-3mf", out_name,
             "--debug", str(debug),
             "--logfile", str(Path(folder) / "orca.log")]
-    if filament_map:
-        argv += ["--filament-map-mode", "Manual", "--filament-map", ",".join(str(i) for i in filament_map)]
     if min_save:
         argv.append("--min-save")
     return argv

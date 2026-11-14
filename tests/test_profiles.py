@@ -1,6 +1,6 @@
 """Tests of the profile resolver on a hand-written profile tree (tests/fixtures/profiles), and on the
 installed OrcaSlicer's profiles when they are found (skipped otherwise).
-Version: 2026.10.24.4
+Version: 2026.11.14.2
 """
 import json
 from pathlib import Path
@@ -176,9 +176,10 @@ def test_overrides_go_to_copies_and_are_typed(v):
 
 
 def test_override_list_replicates_to_current_length(v):
-    s = {"printer": {"model": "H2D", "nozzle": 0.4}, "filaments": [{"profile": "Bambu PLA Basic"}],
-         "overrides": {"filament": {"all": {"nozzle_temperature": 225}}}}
-    assert P.resolve(v, s)["filaments"][0]["nozzle_temperature"] == ["225", "225"]
+    # a list per extruder variant (the fixture's two-variant filament) keeps its length
+    f = v.flatten("Bambu PLA Basic @BBL H2D")
+    P.apply_overrides(f, {"nozzle_temperature": 225}, "filament.1", {}, {})
+    assert f["nozzle_temperature"] == ["225", "225"]
 
 
 @pytest.mark.parametrize("ov,match", [
@@ -202,20 +203,12 @@ def test_plates(v):
         P.resolve(v, study(printer={"model": "P2S", "plate": "glass"}))
 
 
-def test_h2d_extruder_map(v):
-    s = {"printer": {"model": "H2D"}, "filaments": [{"profile": "Bambu PLA Basic", "extruder": "right"},
-                                                    {"type": "PETG", "extruder": "left"}]}
-    r = P.resolve(v, s)
-    assert r["filament_map"] == [2, 1] and r["model"]["extruders"] == 2
-    s["filaments"][0]["extruder"] = "middle"
-    with pytest.raises(P.ProfileError, match="'left', 'right'"):
-        P.resolve(v, s)
-    assert P.resolve(v, {**s, "filaments": [{"profile": "Bambu PLA Basic"}]})["filament_map"] is None
-
-
-def test_single_extruder_ignores_extruder(v):
-    r = P.resolve(v, study(filaments=[{"profile": "Bambu PLA Basic", "extruder": "left"}]))
-    assert r["filament_map"] is None and any("one extruder" in w for w in r["warnings"])
+def test_multi_extruder_printers_are_refused(v):
+    # H2D support was removed (git tag h2d-last): a two-nozzle machine stops with a clear message
+    with pytest.raises(P.ProfileError, match="2 extruders.*not supported.*h2d-last"):
+        P.resolve(v, {"printer": {"model": "H2D"}, "filaments": [{"profile": "Bambu PLA Basic"}]})
+    r = P.resolve(v, study())
+    assert "extruders" not in r["model"] and "filament_map" not in r
 
 
 def test_model_without_processes(v):
@@ -227,7 +220,7 @@ def test_model_without_processes(v):
 
 def test_every_filament_gets_a_color(v):
     # without filament_colour OrcaSlicer 2.4.2 skips the flush matrix and crashes with 2+ filaments
-    s = {"printer": {"model": "H2D"}, "filaments": [{"profile": "Bambu PLA Basic"}, {"type": "PETG"}]}
+    s = {"printer": {"model": "P2S"}, "filaments": [{"profile": "Bambu PLA Basic"}, {"type": "PETG"}]}
     r = P.resolve(v, s)
     cols = [f["filament_colour"] for f in r["filaments"]]
     assert cols == [["#FFFFFF"], ["#000000"]] and len(set(map(tuple, cols))) == 2
@@ -277,7 +270,7 @@ REAL = P.find_profiles()
 
 
 @pytest.mark.skipif(REAL is None or REAL == FIX, reason="OrcaSlicer profiles not found (set P3DT_ORCA_PROFILES)")
-@pytest.mark.parametrize("model", ["H2D", "H2S", "P2S"])
+@pytest.mark.parametrize("model", ["H2S", "P2S"])
 @pytest.mark.parametrize("nozzle", [0.2, 0.4, 0.6, 0.8])
 def test_real_profiles_resolve(model, nozzle):
     v = P.Vendor(REAL)

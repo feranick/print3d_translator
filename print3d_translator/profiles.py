@@ -1,7 +1,7 @@
 """profiles.py — OrcaSlicer system profiles: find them, index them, flatten them, choose the machine,
 process and filament profiles for a study, apply the intent and overrides, and write the flattened
 copies the OrcaSlicer CLI loads.
-Version: 2026.11.11.6
+Version: 2026.11.14.2
 
 Why we flatten: OrcaSlicer 2.4.2's --load-settings / --load-filaments read one JSON file and do not
 follow "inherits" (OrcaSlicer issue #14718): every key a leaf profile does not set silently falls back
@@ -29,8 +29,12 @@ TEMPLATE_IDENTITY = {"name", "type", "from", "instantiation", "setting_id", "inh
 _KINDS = {"machine_model_list": "machine_model", "machine_list": "machine",
           "process_list": "process", "filament_list": "filament"}
 
-# printers this translator is built and tested for; other Bambu Lab models resolve with a warning
-SUPPORTED_MODELS = ("H2D", "H2S", "P2S")
+# printers this translator is built and tested for; other single-nozzle Bambu Lab models resolve with a
+# warning. Multi-extruder printers (H2D) are refused: their support was removed in 2026.11.14.2
+# (git tag h2d-last, docs/H2D.md).
+SUPPORTED_MODELS = ("H2S", "P2S")
+MULTI_EXTRUDER_REMOVED = ("multi-extruder printers (H2D) are not supported: one nozzle only (H2S, P2S). "
+                          "The H2D code is kept in git (tag h2d-last, docs/H2D.md)")
 
 # study plate name -> (OrcaSlicer curr_bed_type, filament bed temperature key)
 PLATES = {
@@ -61,7 +65,6 @@ NEEDED_FALLBACK = "tree"    # "needed": sliced without supports; again with thes
 NEEDED_FALLBACKS = ("tree", "auto")     # ... and with normal supports if tree supports make toolpaths conflict (-101)
 # filament colours when the study gives none (distinct, so flush volumes are not underestimated)
 DEFAULT_COLORS = ["#FFFFFF", "#000000", "#FF0000", "#0000FF", "#00A000", "#FFD700", "#808080", "#FF8000"]
-EXTRUDERS = {"left": 1, "right": 2}      # H2D: filament_map values (extruder_printable_area[0] is the left one)
 
 
 class ProfileError(ValueError):
@@ -328,7 +331,7 @@ class Vendor:
 
     # -- printers
     def models(self) -> dict[str, dict]:
-        """{short name: machine_model profile}, e.g. {'H2D': {...'model_id': 'O1D'...}}."""
+        """{short name: machine_model profile}, e.g. {'P2S': {...'model_id': 'N7'...}}."""
         out = {}
         for n, k in self.kinds.items():
             if k == "machine_model":
@@ -337,7 +340,7 @@ class Vendor:
         return out
 
     def machine(self, model: str, nozzle: float) -> tuple[str, dict]:
-        """The machine profile name for a model ('H2D') and nozzle (0.4), and its machine_model."""
+        """The machine profile name for a model ('P2S') and nozzle (0.4), and its machine_model."""
         models = self.models()
         key = str(model).replace("Bambu Lab ", "").replace(" ", "").upper()
         mm = next((v for k, v in models.items() if k.upper() == key), None)
@@ -503,9 +506,12 @@ def resolve(v: Vendor, study: dict) -> dict:
     mname, mm = v.machine(printer.get("model", ""), nozzle)
     short = mm["name"].replace("Bambu Lab ", "").replace(" ", "")
     warnings = []
+    machine = v.flatten(mname)
+    n_ext = len(_as_list(machine.get("nozzle_diameter", ["0.4"])))
+    if n_ext > 1:
+        raise ProfileError(f"the {mm['name']} has {n_ext} extruders: {MULTI_EXTRUDER_REMOVED}")
     if short not in SUPPORTED_MODELS:
         warnings.append(f"{mm['name']} is not one of the tested printers {list(SUPPORTED_MODELS)}")
-    machine = v.flatten(mname)
     intent = study.get("intent") or {}
     unknown = set(intent) - INTENT_KEYS
     if unknown:
@@ -560,24 +566,11 @@ def resolve(v: Vendor, study: dict) -> dict:
         if not cfg.get(temp_key) or cfg.get(temp_key) in (["0"], "0"):
             warnings.append(f"filament {i} ({cfg['name']}) has no {temp_key}: is the {bed_type} right for it?")
 
-    # H2D: filament -> extruder (filament_map: 1 left, 2 right), manual when any is given
-    n_ext = len(_as_list(machine.get("nozzle_diameter", ["0.4"])))
-    fmap = None
-    wants = [fs.get("extruder", "auto") for fs in fils_spec]
-    if n_ext > 1 and any(w != "auto" for w in wants):
-        for i, w in enumerate(wants, start=1):
-            if w not in ("auto", *EXTRUDERS):
-                raise ProfileError(f"filaments[{i - 1}].extruder '{w}': choose 'left', 'right' or 'auto'")
-        fmap = [EXTRUDERS.get(w, 2) for w in wants]
-    elif n_ext == 1 and any(w != "auto" for w in wants):
-        warnings.append(f"the {mm['name']} has one extruder: filaments[].extruder is ignored")
-
     return {"machine": machine, "process": process, "filaments": filaments,
             "names": {"machine": mname, "process": pname, "filaments": fnames},
-            "model": {"name": mm["name"], "short": short, "model_id": mm.get("model_id"),
-                      "nozzle": nozzle, "extruders": n_ext},
+            "model": {"name": mm["name"], "short": short, "model_id": mm.get("model_id"), "nozzle": nozzle},
             "plate": {"name": plate, "bed_type": bed_type, "temp_key": temp_key},
-            "filament_map": fmap, "set": changes, "warnings": warnings,
+            "set": changes, "warnings": warnings,
             "vendor_version": v.version}
 
 

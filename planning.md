@@ -1,10 +1,10 @@
 # print3d_translator: planning
 
 Session context. A new chat starts with "Read planning.md and start."
-Status (2026-11-14): **2026.11.14.1, complete end to end, pinned to OrcaSlicer 2.5.1, verified on the Mac
-through MCP** (bench 3/3; cabin parts, colour change + pause and A350 plate 1 reliable or accepted).
-A350 plate 1 printed successfully on the real printer.
-196 tests pass, 15 skip (sandbox). Details of the study format, the checker, placement, 3MF input and
+Status (2026-11-14): **2026.11.14.2, complete end to end, P2S and H2S only (H2D removed), pinned to
+OrcaSlicer 2.5.1, verified on the Mac through MCP** (bench 3/3; cabin parts, colour change + pause and
+A350 plate 1 reliable or accepted). A350 plate 1 printed successfully on the real P2S.
+192 tests pass, 11 skip (sandbox). Details of the study format, the checker, placement, 3MF input and
 OrcaSlicer versions are in the README; this file keeps decisions, setup, lessons and history.
 
 ## Decisions
@@ -13,7 +13,8 @@ OrcaSlicer versions are in the README; this file keeps decisions, setup, lessons
   Standalone: **not added to the llm-translators suite**, but follows its conventions
   (docs/create_new_translators.md), so it could join later.
 - **It produces and checks files only.** No printer communication at all: no network, no cloud, no submission.
-  The user prints `files.gcode_3mf` from the SD card, Bambu Studio or Handy.
+  The user prints `files.gcode_3mf` from the SD card, Bambu Studio or Handy. A printer status probe
+  (progress, temperatures, AMS) would be a **separate, read-only tool** outside p3dt (decided 2026-11-14).
 - **Runs locally on the Mac.** No remote features unless one gives a clear advantage: no SLURM, executor,
   router or machines; MCP stdio only. `get_file` and a local `cancel` flag file are kept (cheap).
   Linux x86_64/aarch64 stay supported (AppImage layout, tests) but are secondary.
@@ -21,7 +22,8 @@ OrcaSlicer versions are in the README; this file keeps decisions, setup, lessons
 - **Versioning:** YYYY.MM.DD.x in `__init__.py`, `pyproject.toml`, module docstrings and the README versions table.
 - **Licence:** OrcaSlicer's bundled profiles are AGPL-3.0: never copied into the repo; read from the installed
   app or the source checkout. Test fixtures are small hand-written profile trees.
-- **Scope:** Bambu Lab H2D (two extruders), H2S, P2S; nozzles 0.2/0.4/0.6/0.8; Bambu PLA Basic/Matte,
+- **Scope:** Bambu Lab P2S (the user's printer) and H2S, one nozzle; the H2D was removed on 2026-11-14
+  because it cannot be tested (git tag `h2d-last`, branch `h2d`, `docs/H2D.md`); nozzles 0.2/0.4/0.6/0.8; Bambu PLA Basic/Matte,
   PETG HF/Basic, generic PLA/PETG; multi-material (AMS) included. Out of scope for now: variable layer
   height, ironing, fuzzy skin.
 
@@ -77,7 +79,7 @@ OrcaSlicer versions are in the README; this file keeps decisions, setup, lessons
   `compatible_printers` set. Filament names are not uniform: choose by `compatible_printers`.
 - **Bed type defaults to Cool Plate** (unsupported on these printers) → always `--curr-bed-type`; `PLATE_ALIASES`
   map Bambu Studio names to Orca's enum.
-- **`filament_colour` missing → SIGSEGV** with 2+ filaments on the H2D (no flush matrix) → every filament gets a colour.
+- **`filament_colour` missing → SIGSEGV** with 2+ filaments (seen on the H2D; no flush matrix) → every filament gets a colour.
 - **Positions:** `--load-assemble-list` with `need_arrange: false`, one STL per object already placed, `--arrange 0 --orient 0`.
   Positions and our `wipe_tower_x/y` are kept. The prime tower must be placed by us (default lands off the P2S bed: -102).
 - **Assemble list extras:** `assemble_index` merges parts into `assemble_N`; `print_params` per object;
@@ -113,10 +115,14 @@ OrcaSlicer versions are in the README; this file keeps decisions, setup, lessons
   **A350 plate 1 printed successfully** (the first real print reported). Its remaining findings (hatch 4.75 mm
   overhang at z 10, mid-fuselage ceiling at z 208.4, small spots at z 7.4 / 30.8 / 82.2, slivers on the rear
   rim and hatch tip) did not affect the print: findings of this size, accepted with `accept`, are tolerable.
+  **2026.11.14.2: H2D support removed** (only a P2S to test on); tag `h2d-last`, branch `h2d`, `docs/H2D.md`.
+  `tools/compare_bambu.py` gains the multi-filament comparison and an HTML report (for a P2S GUI export).
 
 ## Open
 
 - **A real print** of the tree-support cradle; preview and skip-object on the printer still to be checked.
-- A GUI multi-filament export (H2D, two filaments) to compare `filament_maps` and `layer_filament_lists`.
+- **P2S multi-filament GUI export** (cabin C2: floor white, seats blue) compared with p3dt's with
+  `tools/compare_bambu.py --html` (filament maps, layer filament lists, tool changes, flushes, prime tower, grams).
+- **Printer status tool** (separate, read-only, outside p3dt): to be designed.
 - Ideas: `orient: "min_support"` (search rotations by unsupported area); suggest an orientation when supports
   are `none` and regions fail; support enforcers/blockers from flagged regions (needs painted 3MF input and a CLI spike).

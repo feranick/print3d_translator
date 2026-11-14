@@ -1,7 +1,7 @@
 """runner.py — one study end to end: validate, resolve profiles, load / orient / check / place the parts,
 write the flattened profiles, STLs and assemble list, run OrcaSlicer, fill in the archive's printer id,
 check everything independently, and write <name>.json (atomically).
-Version: 2026.11.11.6
+Version: 2026.11.14.2
 
 Study folder <name>/:
   profiles/          machine.json, process.json, filament_<i>.json (flattened copies; never the installed ones)
@@ -123,22 +123,8 @@ def prepare(name: str, study: dict, folder: Path, base_dir=None, exe: str | None
 
     bed = C._poly(machine.get("printable_area"))
     height = _f(machine.get("printable_height"), 250)
-    ext_areas = [C._poly(a) for a in C._list(machine.get("extruder_printable_area"))] if machine.get("extruder_printable_area") else []
     nozzle = r["model"]["nozzle"]
     first_layer = _f(process.get("initial_layer_print_height"), _f(process.get("layer_height"), 0.2))
-    fmap = r["filament_map"]
-
-    def extruders_for(fils):
-        if not ext_areas:
-            return None
-        return sorted({fmap[f - 1] for f in fils}) if fmap else list(range(1, len(ext_areas) + 1))
-
-    def area_for(exts):
-        if not exts:
-            return bed, "printable area"
-        lo = np.max([ext_areas[e - 1].min(axis=0) for e in exts], axis=0)
-        hi = np.min([ext_areas[e - 1].max(axis=0) for e in exts], axis=0)
-        return np.array([lo, [hi[0], lo[1]], hi, [lo[0], hi[1]]]), f"area extruder(s) {exts} print"
 
     names = F.object_names(study)
     pkeys = P.process_keys(r)
@@ -161,9 +147,7 @@ def prepare(name: str, study: dict, folder: Path, base_dir=None, exe: str | None
         volume = float(sum(q["volume"] for q in parts))
         part = {"tri": tri, "volume": volume, "volume_from": parts[0]["volume_from"] if len(parts) == 1 else
                 "+".join(sorted({q["volume_from"] for q in parts})), "area": M.area(tri), "parts_tri": ptri}
-        exts = extruders_for(fils)
-        area, area_name = area_for(exts)
-        pre = Gm.checks(part, area, height, nozzle, sp["angle_deg"], supports, area_name, layer_height=sp["layer_height"],
+        pre = Gm.checks(part, bed, height, nozzle, sp["angle_deg"], supports, "printable area", layer_height=sp["layer_height"],
                         first_layer=_f(oproc.get("initial_layer_print_height"), sp["layer_height"]),
                         line_width=sp["line_width"])
         for cn, ch in pre.items():
@@ -189,7 +173,7 @@ def prepare(name: str, study: dict, folder: Path, base_dir=None, exe: str | None
         n = int(o.get("copies", 1))
         for c in range(n):
             ident = oname if n == 1 else f"{oname}-{c + 1}"
-            instances.append({"id": ident, "object": oname, "tri": tri, "halo": halo, "extruders": exts,
+            instances.append({"id": ident, "object": oname, "tri": tri, "halo": halo,
                               "at": o.get("at"), "filaments": fils, "volume": volume, "settings": settings,
                               "parts": [{"name": q["name"], "filament": q["filament"], "tri": t_} for q, t_ in zip(parts, ptri)],
                               "supports": supports})
@@ -203,11 +187,10 @@ def prepare(name: str, study: dict, folder: Path, base_dir=None, exe: str | None
     tower = None
     if len(used) > 1 and str(process.get("enable_prime_tower", "1")) not in ("0", "false"):
         w = _f(process.get("prime_tower_width"), 35)
-        tower = {"w": w, "d": w, "halo": 5.0,
-                 "extruders": sorted({e for i in instances for e in (i["extruders"] or [])}) or None}
+        tower = {"w": w, "d": w, "halo": 5.0}
     wz = machine.get("wrapping_exclude_area")
     exclude = C._poly(wz) if wz and len(C._list(wz) if isinstance(wz, str) else wz) >= 3 else None
-    plc = PL.place(instances, bed, ext_areas or None, tower, exclude, overlap=layout["overlap"], first_layer=first_layer)
+    plc = PL.place(instances, bed, tower, exclude, overlap=layout["overlap"], first_layer=first_layer)
     changes = r["set"]
     if plc["tower"]:
         P._set(process, "wipe_tower_x", [plc["tower"]["x"]], changes, "process")
@@ -251,12 +234,12 @@ def prepare(name: str, study: dict, folder: Path, base_dir=None, exe: str | None
         shutil.rmtree(slice_dir)
     slice_dir.mkdir()
     argv = orca.command(exe, slice_dir, files["machine"], files["process"], files["filaments"],
-                        str(folder / "assemble.json"), r["plate"]["bed_type"], fmap)
+                        str(folder / "assemble.json"), r["plate"]["bed_type"])
     if study.get("allow_mix_temp"):
         argv.append("--allow-mix-temp")
     return {"name": name, "folder": folder, "exe": exe, "vendor": vendor, "resolved": r, "objects": objects,
             "placed": placed, "tower": plc["tower"], "files": files, "argv": argv, "slice_dir": slice_dir,
-            "warnings": warnings, "fmap": fmap, "used": used, "study": study, "instances": instances, "layout": {**layout, "strategy": plc.get("strategy")}}
+            "warnings": warnings, "used": used, "study": study, "instances": instances, "layout": {**layout, "strategy": plc.get("strategy")}}
 
 
 def _load_parts(o: dict, base_dir, n_fil: int, oname: str, warnings: list) -> list[dict]:
@@ -459,7 +442,7 @@ def _run_once(name: str, study: dict, folder: str | Path, base_dir=None, result:
                           "build_volume": [*(C._poly(r["machine"].get("printable_area")).max(axis=0).round(1).tolist()),
                                            _f(r["machine"].get("printable_height"))]}
         res["profiles"] = {**r["names"], "orca_version": orca.version(ctx["exe"]), "vendor_version": r["vendor_version"],
-                           "set": r["set"], "sha256": ctx["files"]["sha256"], "filament_map": ctx["fmap"]}
+                           "set": r["set"], "sha256": ctx["files"]["sha256"]}
         res["objects"] = ctx["objects"]
         res["placement"] = {"tower": ctx["tower"]}
         res["files"]["profiles"] = str(folder / "profiles")
@@ -515,11 +498,11 @@ def _run_once(name: str, study: dict, folder: str | Path, base_dir=None, result:
                                    C._poly(r["machine"].get("printable_area")))
         except Exception as e:                           # pictures are cosmetic: never fail a print on them
             res["warnings"].append(f"thumbnails not rendered: {type(e).__name__}: {e}")
-        fin = A.finalize(arch, model_id, r["model"]["extruders"], head.get("first_layer_time_s"), images)
+        fin = A.finalize(arch, model_id, head.get("first_layer_time_s"), images)
         patched = fin["changed"]
         a = A.read(arch)
         checks = A.check_archive(a, plain.read_bytes() if plain.exists() else None, model_id, r["model"]["nozzle"],
-                                 len(r["filaments"]), ctx["fmap"])
+                                 len(r["filaments"]))
         rt = A.roundtrip(r["machine"], r["process"], r["filaments"], a.get("project") or {}, P.orca_keys()["keys"])
         checks["settings_roundtrip"] = {"passed": rt["passed"], "hard": True,
                                         "why": "every setting we wrote is the one OrcaSlicer sliced with",
@@ -533,8 +516,7 @@ def _run_once(name: str, study: dict, folder: str | Path, base_dir=None, result:
             return res
         Pg = G.parse(a["gcode"].decode("utf-8", errors="replace"))
         tb = next((o["bbox"] for o in ((a.get("plate_json") or {}).get("bbox_objects") or []) if o.get("name") == "wipe_tower"), None)
-        fmap = ctx["fmap"] or [int(_f(x)) for x in ((a.get("project") or {}).get("filament_map") or [])] or None
-        gc = C.check_gcode(Pg, r, ctx["placed"], tower_bbox=tb, filament_map=fmap,
+        gc = C.check_gcode(Pg, r, ctx["placed"], tower_bbox=tb,
                            color_changes=(ctx["study"].get("intent") or {}).get("color_changes"))
         checks.update(gc["checks"])
         if pauses:

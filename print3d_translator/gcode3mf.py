@@ -1,8 +1,8 @@
 """gcode3mf.py — the Bambu .gcode.3mf archive: read it, check its structure, compare the settings it
 was sliced with against ours, and fill in what OrcaSlicer's CLI leaves out.
-Version: 2026.11.11.5
+Version: 2026.11.14.2
 
-Layout written by OrcaSlicer 2.4.2 (--export-3mf after --slice), as seen on the P2S and H2D:
+Layout written by OrcaSlicer 2.4.2 (--export-3mf after --slice), as seen on the P2S:
   [Content_Types].xml, _rels/.rels, 3D/3dmodel.model (+ 3D/Objects/*.model without --min-save),
   Metadata/plate_<n>.gcode, plate_<n>.gcode.md5 (upper-case hex MD5 of the G-code bytes),
   slice_info.config (XML: plate metadata, objects, filaments with used_m/used_g, warnings, nozzles),
@@ -94,7 +94,7 @@ def md5_upper(data: bytes) -> str:
 
 
 def check_archive(a: dict, plain_gcode: bytes | None, model_id: str | None, nozzle: float,
-                  n_filaments: int, filament_map: list[int] | None = None) -> dict:
+                  n_filaments: int) -> dict:
     """The structural checks: {name: {passed, got, expected, why}}."""
     c = {}
     missing = [n for n in REQUIRED if n not in a["names"]]
@@ -133,10 +133,6 @@ def check_archive(a: dict, plain_gcode: bytes | None, model_id: str | None, nozz
         used = [int(f["id"]) for f in fil]
         c["slice_info_filaments"] = {"passed": bool(used) and max(used) <= n_filaments, "got": used,
                                      "expected": f"ids within 1..{n_filaments}"}
-        if filament_map:
-            got = [int(v) for v in md.get("filament_maps", "").split()]
-            c["filament_map"] = {"passed": got == list(filament_map), "got": got, "expected": list(filament_map),
-                                 "why": "each filament must go to the extruder the study asked for (1 left, 2 right)"}
     else:
         c["slice_info"] = {"passed": False, "why": "slice_info.config is missing or has no plate"}
     return c
@@ -337,13 +333,12 @@ def replace_gcode(path: str | Path, text: str) -> None:
     tmp.replace(path)
 
 
-def finalize(path: str | Path, model_id: str | None, extruders: int = 1, first_layer_s: float | None = None,
+def finalize(path: str | Path, model_id: str | None, first_layer_s: float | None = None,
              images: dict | None = None) -> dict:
     """Makes the CLI's archive match what OrcaSlicer's GUI exports ('Export plate sliced file', compared in
-    spike S4 on the P2S and H2D), without touching the G-code or its md5:
+    spike S4), without touching the G-code or its md5:
       slice_info:     printer_model_id (the CLI leaves it empty); first_layer_time from the G-code header
-                      (the CLI writes 0, or garbage such as 3.07e32 on the P2S); nozzle_volume_type with one
-                      value per extruder (the CLI writes one value on the H2D, the GUI '0 0')
+                      (the CLI writes 0, or garbage such as 3.07e32 on the P2S)
       model_settings: the plate's filament_maps, thumbnail_file, thumbnail_no_light_file, top_file,
                       pick_file and pattern_bbox_file entries
       plate_1.json:   first_layer_time
@@ -370,11 +365,6 @@ def finalize(path: str | Path, model_id: str | None, extruders: int = 1, first_l
         flt = 0.0
     if flt is not None:
         si = _set_meta(si, "first_layer_time", f"{flt:.6f}")
-    m = re.search(r'<metadata key="nozzle_volume_type" value="([^"]*)"', si)
-    if m and extruders > 1:
-        vals = m.group(1).split()
-        if 0 < len(vals) < extruders:
-            si = _set_meta(si, "nozzle_volume_type", " ".join(vals + [vals[-1]] * (extruders - len(vals))))
     if si != si0:
         files["Metadata/slice_info.config"] = si.encode("utf-8")
         changed.append("slice_info.config")

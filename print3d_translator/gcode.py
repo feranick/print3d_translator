@@ -1,15 +1,15 @@
 """gcode.py — an independent, streaming reader of OrcaSlicer / Bambu Lab G-code. It does not trust the
 slicer's summary: it follows every move and returns the extrusion segments, layers, tools, objects,
 features and temperatures, which check.py compares with the study.
-Version: 2026.11.11.5
+Version: 2026.11.14.2
 
 What it understands:
 - G0/G1 and arcs G2/G3 (I/J centre offsets, Z helix, P full turns), G90/G91, M82/M83, G92, G28.
 - T<n> tool changes (n < 255 is filament n+1; T255/T1000/T1001/T65279/T65535 are not filaments).
 - M104/M109 (nozzle, with T<n>; with an N parameter, OrcaSlicer 2.5's pre-heating / pre-cooling of an idle
-  nozzle: kind 'nozzle_standby'), M140/M190 (bed), M141/M191 (chamber); Bambu's filament change
-  M620.10 A0/A1 ... P<print temperature> T<flush temperature> (the H2D sets the incoming filament's
-  nozzle temperature this way, not with M104). An 'A' flag on M104/M109 is kept in 'flags'.
+  nozzle, 'M104 T0 S.. N0', written on the P2S too: kind 'nozzle_standby'), M140/M190 (bed), M141/M191
+  (chamber); Bambu's filament change M620.10 A0/A1 ... P<print temperature> T<flush temperature>
+  (the outgoing and incoming filament's temperatures). An 'A' flag on M104/M109 is kept in 'flags'.
 - Firmware conditional blocks M622 J<n> ... M623: their commands may or may not run. Temperatures
   and tool changes inside are recorded as conditional and not applied; moves inside make the
   position unknown afterwards.
@@ -317,7 +317,7 @@ def parse(text: str, arc_step_deg: float = 10.0) -> Parsed:
                     rec["tool"] = n
                 pending_incoming.clear()
         elif cmd == "M620.10":
-            # Bambu filament change (H2D): A0 = outgoing filament, A1 = incoming; P = its print
+            # Bambu filament change: A0 = outgoing filament, A1 = incoming; P = its print
             # temperature, T = flush temperature. The incoming tool is the next T<n>.
             p, _ = _params(code[1:])
             if "P" in p and "A" in p:
@@ -333,7 +333,7 @@ def parse(text: str, arc_step_deg: float = 10.0) -> Parsed:
                 kind = {"M104": "nozzle", "M109": "nozzle", "M140": "bed", "M190": "bed",
                         "M141": "chamber", "M191": "chamber"}[cmd]
                 if kind == "nozzle" and "N" in p:
-                    # OrcaSlicer 2.5+ multi-nozzle pre-heating / pre-cooling of the idle nozzle ('M104 T<nozzle>
+                    # OrcaSlicer 2.5+ pre-heating / pre-cooling of an idle nozzle ('M104 T<nozzle>
                     # S.. N0'): T is a nozzle, not a filament, and the value is not the printing temperature
                     kind = "nozzle_standby"
                 t = int(p["T"]) if "T" in p else tool

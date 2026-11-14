@@ -1,5 +1,5 @@
 """Tests of geometry.py (loading, orientation, checks before slicing) and placement.py.
-Version: 2026.10.29.1
+Version: 2026.11.14.2
 """
 import json
 import zipfile
@@ -163,8 +163,8 @@ def test_open_mesh_is_hard_for_mesh_input():
 
 # ------------------------------------------------------------- placement
 
-def item(i, sx, sy, ext=None, at=None, halo=3.0):
-    return {"id": i, "tri": M.place(M.box(sx, sy, 5), (0, 0)), "halo": halo, "extruders": ext, "at": at}
+def item(i, sx, sy, at=None, halo=3.0):
+    return {"id": i, "tri": M.place(M.box(sx, sy, 5), (0, 0)), "halo": halo, "at": at}
 
 
 def rects(out):
@@ -195,7 +195,7 @@ def test_place_no_overlap_on_bed_and_deterministic():
 def test_place_fixed_tower_and_zone():
     zone = np.array([[153, 235], [216, 256]], float)
     out = PL.place([item("a", 20, 20, at=[60, 60]), item("b", 40, 40)], BED,
-                   tower={"w": 35, "d": 35, "halo": 5, "extruders": None}, exclude=zone)
+                   tower={"w": 35, "d": 35, "halo": 5}, exclude=zone)
     assert out["placed"]["a"]["center"] == [60.0, 60.0]
     t = out["tower"]["rect"]
     assert t[2] <= 256 and t[3] <= 256 and t[1] > 128                # on the bed, at the back
@@ -204,18 +204,9 @@ def test_place_fixed_tower_and_zone():
         assert not overlap(r, t, 0)
 
 
-def test_place_per_extruder_areas():
-    h2d = np.array([[0, 0], [350, 0], [350, 320], [0, 320]], float)
-    areas = [np.array([[0, 0], [325, 320]], float), np.array([[25, 0], [350, 320]], float)]
-    with pytest.raises(PL.PlacementError, match="outside the area"):
-        PL.place([item("r", 20, 20, ext=[2], at=[20, 100])], h2d, areas)
-    out = PL.place([item("l", 20, 20, ext=[1], at=[20, 100])], h2d, areas)
-    assert out["placed"]["l"]["center"] == [20.0, 100.0]
-
-
 @pytest.mark.parametrize("items,match", [
     ([item("big", 300, 10)], "does not fit"),
-    ([item("x", 20, 20, at=[5, 5])], "outside the area"),
+    ([item("x", 20, 20, at=[5, 5])], "outside the printable area"),
     ([item("x", 20, 20, at=[100, 100]), item("y", 20, 20, at=[110, 100])], "overlaps"),
     ([item(f"p{k}", 80, 80) for k in range(12)], "no room"),
 ])

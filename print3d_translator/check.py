@@ -1,14 +1,13 @@
 """check.py — independent checks of a sliced plate: the G-code (as gcode.py reads it) against the study,
 our flattened profiles and the placed geometry. Nothing here trusts OrcaSlicer's own summary; its
 estimates are only compared with ours.
-Version: 2026.11.11.2
+Version: 2026.11.14.2
 
 Each check is {passed, hard, why, got, expected, ...}. A failed hard check makes the result
 unreliable. The checks:
 
   objects_present   every placed object is printed (object markers), and nothing else
-  bounds            every extrusion of the print is inside the printable area of the extruder that
-                    prints it (H2D: per-extruder areas), with 0 < z <= printable height
+  bounds            every extrusion of the print is inside the printable area, with 0 < z <= printable height
   travel            travel moves of the print stay within the bed, 1 mm margin (soft)
   layers            layer count and heights: first layer = initial_layer_print_height, then
                     layer_height; the top at the part height (+- half a layer). Support-only layers
@@ -22,7 +21,6 @@ unreliable. The checks:
   footprint         no extrusion outside its allowed region: the object's silhouette + half a line
                     (object features), + brim, + support margin, the prime tower's own rectangle
   wrapping_area     no extrusion in the machine's wrapping-detection zone (soft)
-  shared_nozzle     (multi-extruder) filaments with different temperatures not on one nozzle (soft)
   bed_vs_filaments  the bed not more than 10 C above a used filament's own bed temperature (soft)
   unsupported_extrusion  every extrusion of the parts rests on the layer below or on support: no
                     more than SEVERE_MAX mm farther than reach + 1 mm (supports.unsupported)
@@ -179,7 +177,7 @@ def category(feature: str) -> str:
 # ---------------------------------------------------------------- the checks
 
 def check_gcode(P: G.Parsed, resolved: dict, objects: list[dict], tower_bbox: list | None = None,
-                filament_map: list[int] | None = None, color_changes: list[dict] | None = None) -> dict:
+                color_changes: list[dict] | None = None) -> dict:
     """objects: [{name (the G-code marker, e.g. 'part_1' or 'assemble_1'), filament (1-based), filaments (all
     of its parts', optional), tri (placed mesh), volume (mm3, exact when known), settings (its own process
     settings, optional)}]. color_changes: [{z, filament}]. Returns {checks, gcode (summary), estimate}."""
@@ -208,36 +206,24 @@ def check_gcode(P: G.Parsed, resolved: dict, objects: list[dict], tower_bbox: li
     checks["objects_present"] = _c(printed == want, "every placed object is printed, and nothing else",
                                    got=sorted(printed), expected=sorted(want))
 
-    # bounds (per extruder on multi-extruder printers)
+    # bounds
     bed = _poly(mv("printable_area"))
     height = _f(mv("printable_height"), 1e9)
-    ext_areas = [_poly(a) for a in _list(mv("extruder_printable_area"))] if mv("extruder_printable_area") else []
-    fmap = filament_map or [int(_f(v)) for v in _list(cfg.get("filament_map"))] or None
-    if fmap and len(fmap) < len(fils):
-        # OrcaSlicer 2.4.2 may write one value for several filaments (auto map); its CLI gives the
-        # missing filaments the first value ("set filament_map of filament N to first value")
-        fmap = list(fmap) + [fmap[0]] * (len(fils) - len(fmap))
     bad_pts, worst = 0, None
     if printing.any():
-        for t in np.unique(info[printing, 1]):
-            m = printing & (info[:, 1] == t)
-            area = bed
-            if ext_areas and fmap and 0 <= t < len(fmap) and 1 <= fmap[t] <= len(ext_areas):
-                area = ext_areas[fmap[t] - 1]
-            pts = np.vstack([seg[m][:, 0:2], seg[m][:, 2:4]])
-            ok = inside(pts, area, TOL_XY)
-            if (~ok).any():
-                bad_pts += int((~ok).sum())
-                worst = pts[~ok][0].round(3).tolist()
+        pts = np.vstack([seg[printing][:, 0:2], seg[printing][:, 2:4]])
+        ok = inside(pts, bed, TOL_XY)
+        if (~ok).any():
+            bad_pts = int((~ok).sum())
+            worst = pts[~ok][0].round(3).tolist()
         zs = seg[printing, 4]
         zbad = int(((zs <= 0) | (zs > height + TOL_Z)).sum())
     else:
         zbad = 0
     checks["bounds"] = _c(bad_pts == 0 and zbad == 0,
-                          "every extrusion of the print inside the printable area of its extruder, 0 < z <= height",
+                          "every extrusion of the print inside the printable area, 0 < z <= height",
                           got={"points_outside": bad_pts, "first_outside": worst, "z_outside": zbad},
-                          expected={"area": bed.tolist(), "height": height,
-                                    "extruder_areas": [a.tolist() for a in ext_areas] or None})
+                          expected={"area": bed.tolist(), "height": height})
     tb = P.travel_bbox.get("print")
     if tb:
         lo, hi = bed.min(axis=0), bed.max(axis=0)
@@ -335,7 +321,7 @@ def check_gcode(P: G.Parsed, resolved: dict, objects: list[dict], tower_bbox: li
 
     # temperatures
     checks["temperatures"] = _temperatures(P, resolved, used)
-    checks.update(_compromises(resolved, used, fmap, ext_areas, checks["temperatures"]))
+    checks.update(_compromises(used, checks["temperatures"]))
 
     # unlocated extrusion in the print
     unl = {k: round(v, 3) for k, v in P.unlocated_by_region.items()}
@@ -435,29 +421,12 @@ def _temperatures(P: G.Parsed, resolved: dict, used: list[int]) -> dict:
               problems=problems[:20])
 
 
-def _compromises(resolved: dict, used: list[int], fmap: list[int] | None, ext_areas: list, temps: dict) -> dict:
-    """Soft checks for prints that slice but compromise a filament:
-    shared_nozzle  (multi-extruder) two used filaments on one nozzle whose print temperatures differ
-                   by more than 15 C: the nozzle keeps reheating between them
+def _compromises(used: list[int], temps: dict) -> dict:
+    """Soft check for prints that slice but compromise a filament:
     bed_vs_filaments  the bed (one temperature for all) more than 10 C above a used filament's own bed
                    temperature for this plate (OrcaSlicer's 'bed_temperature_too_high_than_filament')"""
     out = {}
     exp = temps.get("expected", {}).get("filaments", [])
-    if ext_areas and fmap and len(used) > 1:
-        groups = {}
-        for t in used:
-            if t < len(fmap):
-                groups.setdefault(fmap[t], []).append(t)
-        problems = []
-        for ext, ts in groups.items():
-            temps_t = [exp[t]["other"] for t in ts if t < len(exp)]
-            if len(temps_t) > 1 and max(temps_t) - min(temps_t) > 15:
-                problems.append(f"filaments {[t + 1 for t in ts]} share extruder {ext} "
-                                f"({'left' if ext == 1 else 'right'}) at {temps_t} C")
-        out["shared_nozzle"] = _c(not problems, "filaments with different print temperatures on separate nozzles "
-                                  "(set filaments[].extruder 'left'/'right')", hard=False,
-                                  got={"by_extruder": {str(k): [t + 1 for t in v] for k, v in groups.items()}},
-                                  problems=problems)
     bed = temps.get("got", {}).get("bed_max") or temps.get("got", {}).get("bed_start")
     if bed is not None and used:
         over = [f"filament {t + 1}: bed {bed} C, its own {exp[t]['bed_first']} C" for t in used

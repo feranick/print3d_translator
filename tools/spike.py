@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """spike.py — runs OrcaSlicer on small cases to learn what the CLI really does (spikes S2, S3, S4):
-positions from the assemble list, filament mapping on the H2D, the .gcode.3mf layout and md5, and
+positions from the assemble list, multi-filament plates (AMS), the .gcode.3mf layout and md5, and
 whether the settings sliced (project_settings.config) equal our flattened profiles.
-Version: 2026.10.24.4
+Version: 2026.11.14.2
 
-    python tools/spike.py [case ...]        cases: p2s_cube, p2s_cube_minsave, h2d_two_pla, h2d_pla_petg,
-                                            and CRASH_CASES (narrowing down the PLA + PETG crash)
+    python tools/spike.py [case ...]        cases: p2s_cube, p2s_cube_minsave, p2s_two_pla, and CRASH_CASES
+                                            (PLA + PETG on one nozzle)
     python tools/spike.py crash             only the CRASH_CASES
 
 Writes debug/spike/<case>/ (gitignored) and prints a short summary. Nothing is sent anywhere.
@@ -29,35 +29,16 @@ CASES = {
                  "objects": [{"size": [20, 20, 20], "at": [60, 80], "filament": 1}]},
     "p2s_cube_minsave": {"printer": {"model": "P2S", "nozzle": 0.4}, "filaments": [{"profile": "Bambu PLA Basic"}],
                          "objects": [{"size": [20, 20, 20], "at": [60, 80], "filament": 1}], "min_save": True},
-    # two cubes, two PLAs, filament 1 on the right extruder, filament 2 on the left
-    "h2d_two_pla": {"printer": {"model": "H2D", "nozzle": 0.4},
-                    "filaments": [{"profile": "Bambu PLA Basic", "extruder": "right", "color": "#FF0000"},
-                                  {"profile": "Bambu PLA Matte", "extruder": "left", "color": "#0000FF"}],
-                    "objects": [{"size": [20, 20, 10], "at": [250, 160], "filament": 1},
-                                {"size": [20, 20, 10], "at": [100, 160], "filament": 2}]},
-    # PLA + PETG on one plate (different temperatures): does the CLI refuse (-62) or slice?
-    "h2d_pla_petg": {"printer": {"model": "H2D", "nozzle": 0.4},
-                     "filaments": [{"profile": "Bambu PLA Basic", "extruder": "right"},
-                                   {"profile": "Bambu PETG HF", "extruder": "left"}],
-                     "objects": [{"size": [20, 20, 10], "at": [250, 160], "filament": 1},
-                                 {"size": [20, 20, 10], "at": [100, 160], "filament": 2}]},
+    # two cubes, two PLA colours (AMS): the prime tower, the flushes and the filament lists
+    "p2s_two_pla": {"printer": {"model": "P2S", "nozzle": 0.4},
+                    "filaments": [{"profile": "Bambu PLA Basic", "color": "#FFFFFF"},
+                                  {"profile": "Bambu PLA Basic", "color": "#1E88E5"}],
+                    "objects": [{"size": [20, 20, 10], "at": [80, 128], "filament": 1},
+                                {"size": [20, 20, 10], "at": [176, 128], "filament": 2}]},
 }
-# narrowing down the h2d_pla_petg crash (SIGSEGV in OrcaSlicer 2.4.2): which ingredient triggers it?
-_TWO = [{"size": [20, 20, 10], "at": [250, 160], "filament": 1}, {"size": [20, 20, 10], "at": [100, 160], "filament": 2}]
+# PLA + PETG on one nozzle (different temperatures). The H2D cases that narrowed down the 2.4.2 crash
+# (no filament colours -> no flush matrix) are in git, tag h2d-last.
 CRASH_CASES = {
-    "h2d_petg_petg": {"printer": {"model": "H2D"}, "objects": _TWO,          # two PETGs: is it PETG itself?
-                      "filaments": [{"profile": "Bambu PETG HF", "extruder": "right"},
-                                    {"profile": "Bambu PETG Basic", "extruder": "left"}]},
-    "h2d_pla_petg_auto": {"printer": {"model": "H2D"}, "objects": _TWO,      # no manual filament map
-                          "filaments": [{"profile": "Bambu PLA Basic"}, {"profile": "Bambu PETG HF"}]},
-    "h2d_pla_petg_mixtemp": {"printer": {"model": "H2D"}, "objects": _TWO, "extra": ["--allow-mix-temp"],
-                             "filaments": [{"profile": "Bambu PLA Basic", "extruder": "right"},
-                                           {"profile": "Bambu PETG HF", "extruder": "left"}]},
-    "h2d_pla_petg_generic": {"printer": {"model": "H2D"}, "objects": _TWO,   # generic PETG profile instead
-                             "filaments": [{"profile": "Bambu PLA Basic", "extruder": "right"},
-                                           {"profile": "Generic PETG", "extruder": "left"}]},
-    "h2d_petg_only": {"printer": {"model": "H2D"}, "objects": _TWO[:1],     # one PETG object alone
-                      "filaments": [{"profile": "Bambu PETG HF", "extruder": "right"}]},
     "p2s_pla_petg": {"printer": {"model": "P2S"},                           # the same mix on a one-nozzle printer
                      "objects": [{"size": [20, 20, 10], "at": [80, 128], "filament": 1},
                                  {"size": [20, 20, 10], "at": [176, 128], "filament": 2}],
@@ -88,11 +69,11 @@ def run_case(name: str, case: dict, exe: str, vendor: P.Vendor) -> dict:
         objs.append({"path": p, "filament": o["filament"]})
     (d / "assemble.json").write_text(json.dumps(orca.assemble_list(objs), indent=1))
     argv = orca.command(exe, d, files["machine"], files["process"], files["filaments"], str(d / "assemble.json"),
-                        r["plate"]["bed_type"], r["filament_map"], min_save=case.get("min_save", False))
+                        r["plate"]["bed_type"], min_save=case.get("min_save", False))
     argv += case.get("extra", [])
     res = orca.run(argv, d, timeout=600)
     s = {"case": name, "ok": res["ok"], "exit": {k: res[k] for k in ("returncode", "code", "name", "fix", "seconds")},
-         "profiles": r["names"], "filament_map": r["filament_map"],
+         "profiles": r["names"],
          "outdir": sorted(f.name for f in d.iterdir())}
     if not res["ok"]:
         s["stderr_tail"] = res["stderr"][-1500:]

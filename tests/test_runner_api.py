@@ -1,6 +1,6 @@
 """End-to-end tests of format.py, runner.py, api.py, cli.py and mcp_server.py with a fake OrcaSlicer
 (tests/fake_orca.py) and the hand-written profile tree; and one real run when OrcaSlicer is installed.
-Version: 2026.11.11.2
+Version: 2026.11.14.2
 """
 import json
 import os
@@ -39,10 +39,9 @@ def p2s(tmp, **kw):
     return s
 
 
-def h2d(tmp, **kw):
-    s = {"printer": {"model": "H2D"},
-         "filaments": [{"profile": "Bambu PLA Basic", "extruder": "right", "color": "#FF0000"},
-                       {"type": "PETG", "extruder": "left", "color": "#00FF00"}],
+def two_filaments(tmp, **kw):
+    s = {"printer": {"model": "P2S"}, "allow_mix_temp": True,
+         "filaments": [{"profile": "Bambu PLA Basic", "color": "#FF0000"}, {"type": "PETG", "color": "#00FF00"}],
          "objects": [{"name": "a", "part": {"stl": str(tmp / "cube.stl")}},
                      {"name": "b", "part": {"stl": str(tmp / "cube.stl")}, "filament": 2}]}
     s.update(kw)
@@ -75,10 +74,14 @@ def test_validate_mixed_temperatures(fake):
                        {"name": "b", "part": {"stl": str(fake / "cube.stl")}, "filament": 2}]}
     assert not api.validate({"x": p2s(fake, **two)})["x"]["ok"]
     assert api.validate({"x": p2s(fake, allow_mix_temp=True, **two)})["x"]["ok"]
-    assert api.validate({"x": h2d(fake)})["x"]["ok"]
-    same = h2d(fake)
-    same["filaments"][1]["extruder"] = "right"
-    assert "share the right nozzle" in api.validate({"x": same})["x"]["errors"][0]
+    assert api.validate({"x": two_filaments(fake)})["x"]["ok"]
+
+
+def test_h2d_is_refused(fake):
+    v = api.validate({"x": p2s(fake, printer={"model": "H2D"})})["x"]
+    assert not v["ok"] and any("not supported" in e and "h2d-last" in e for e in v["errors"])
+    v = api.validate({"x": p2s(fake, filaments=[{"profile": "Bambu PLA Basic", "extruder": "left"}])})["x"]
+    assert not v["ok"] and any("'extruder' was for the H2D" in e for e in v["errors"])
 
 
 def test_validate_without_profiles(fake, monkeypatch):
@@ -123,10 +126,10 @@ def test_supports_needed(fake, monkeypatch):
     assert res["profiles"]["set"]["process.support_type"][1] == "tree(auto)"
 
 
-def test_run_study_h2d_tower_and_map(fake):
-    res = R.run_study("h", h2d(fake), fake / "h")
+def test_run_study_two_filaments_tower(fake):
+    res = R.run_study("h", two_filaments(fake), fake / "h")
     assert res["reliable"], res["unreliable_because"]
-    assert res["placement"]["tower"] and res["profiles"]["filament_map"] == [2, 1]
+    assert res["placement"]["tower"] and "filament_map" not in res["profiles"]
     assert res["profiles"]["set"]["process.wipe_tower_x"][1] == [str(res["placement"]["tower"]["x"]).rstrip("0").rstrip(".")]
     assert any("bed_vs_filaments" in w for w in res["warnings"])
 
@@ -157,7 +160,7 @@ def test_run_study_geometry_and_placement_errors(fake):
     res = R.run_study("x", p2s(fake, objects=[{"part": {"stl": str(fake / "huge.stl")}}]), fake / "g")
     assert not res["ok"] and "fits" in res["why"]
     res = R.run_study("y", p2s(fake, objects=[{"part": {"stl": str(fake / "cube.stl")}, "at": [2, 2]}]), fake / "p")
-    assert not res["ok"] and "outside the area" in res["why"]
+    assert not res["ok"] and "outside the printable area" in res["why"]
 
 
 def test_expectations_and_lookup():
@@ -172,7 +175,7 @@ def test_expectations_and_lookup():
 # ------------------------------------------------------------- api / cli / mcp
 
 def test_api_run_status_inputs_and_read_file(fake):
-    out = api.run({"one": p2s(fake), "two": h2d(fake)}, wait=60)
+    out = api.run({"one": p2s(fake), "two": two_filaments(fake)}, wait=60)
     assert out["done"] and set(out["studies"]) == {"one", "two"}
     assert all(r["reliable"] for r in out["studies"].values())
     again = api.status(out["request"])
@@ -243,7 +246,7 @@ def test_explicit_profiles_setting_has_no_fallback(fake, monkeypatch):
 
 
 def test_summaries_are_small(fake):
-    out = api.run({"one": p2s(fake), "two": h2d(fake)}, wait=60)
+    out = api.run({"one": p2s(fake), "two": two_filaments(fake)}, wait=60)
     s = api.summarize_request(out)
     assert len(json.dumps(s)) < 0.5 * len(json.dumps(out))
     one = s["studies"]["one"]
@@ -479,3 +482,20 @@ def test_needed_falls_back_to_normal_supports_on_conflict(fake, monkeypatch):
     assert res["reliable"], res.get("unreliable_because") or res.get("why")
     assert [t["supports"] for t in d["tried"]] == ["tree", "auto"] and d["used"] == "auto"
     assert "support_cost" in d and not d["tried"][0]["ok"]
+
+
+def test_compare_bambu_multi_filament(fake, tmp_path):
+    """tools/compare_bambu.py: an archive against itself is all same/info; the HTML page is written."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("compare_bambu", Path(__file__).resolve().parents[1] / "tools" / "compare_bambu.py")
+    cb = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cb)
+    res = R.run_study("mf", two_filaments(fake), fake / "mf")
+    arch = res["files"]["gcode_3mf"]
+    mf = cb.compare_filaments(arch, arch)
+    assert mf["counts"]["differs"] == 0 and mf["counts"]["same"] > 20
+    g = mf["gui"]["gcode"]
+    assert {f for r in g["filaments_by_layer"] for f in r["filaments"]} == {1, 2}
+    assert len(g["tool_changes"]) >= 1 and mf["gui"]["tower"]
+    page = cb.html_report(mf, cb.compare(arch, arch))
+    assert page.startswith("<!doctype html>") and "<svg" in page and "Filaments per layer" in page

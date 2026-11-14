@@ -1,5 +1,5 @@
 """format.py — the study format (study_format) and static validation (validate): no slicing.
-Version: 2026.11.11.2
+Version: 2026.11.14.2
 
 A study is one plate: a Bambu Lab printer, its filaments, the objects on the plate and the intent.
 Validation checks keys, types, files and (when OrcaSlicer's profiles are found) resolves the
@@ -20,7 +20,7 @@ FROM_3MF_KEYS = {"path", "plate", "objects", "filament_map", "layout", "settings
 LAYOUT_KEYS = {"overlap", "gap", "brims_may_overlap"}
 ACCEPT_KEYS = {"check", "object", "z_range", "reason"}
 ACCEPTABLE = {"unsupported_extrusion", "long_bridges", "extrusion_volume", "layers", "footprint", "bed_vs_filaments",
-              "shared_nozzle", "estimates", "thin_walls", "bed_contact", "unsupported_regions", "closed_mesh"}
+              "estimates", "thin_walls", "bed_contact", "unsupported_regions", "closed_mesh"}
 PART_KEYS = {"name", "part", "filament"}
 PART_FORMS = ("step", "stl", "3mf", "goal", "b3dt")
 NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$")
@@ -33,8 +33,8 @@ CONVENTIONS = [
     "Objects are oriented ('as_is', 'flat' = largest flat face down, or {'rotate': [rx, ry, rz]} degrees, X then Y "
     "then Z) and placed by the translator (deterministic; 'at' [x, y] fixes a centre). With 2+ filaments the "
     "translator also places the prime tower.",
-    "H2D: filaments[].extruder 'left' | 'right' | 'auto'. Filaments that print at different temperatures belong "
-    "on different nozzles; on one-nozzle printers they need allow_mix_temp: true (one bed temperature for all).",
+    "Printers have one nozzle (H2S, P2S; multi-extruder printers such as the H2D are not supported). Filaments that "
+    "print at different temperatures need allow_mix_temp: true (one nozzle, one bed temperature for all).",
     "Check 'reliable', 'checks' and 'warnings' before using a result; if reliable is false, do not print it.",
 ]
 
@@ -52,10 +52,10 @@ def study_format(status: dict | None = None) -> dict:
         "format": "print study (print3d_translator)",
         "conventions": CONVENTIONS,
         "study_keys": {
-            "printer": "{model: H2D|H2S|P2S (other Bambu Lab models resolve untested), nozzle: 0.2|0.4|0.6|0.8, "
+            "printer": "{model: H2S|P2S (other single-nozzle Bambu Lab models resolve untested; H2D not supported), nozzle: 0.2|0.4|0.6|0.8, "
                        f"plate: {'|'.join(sorted(P.PLATES))} (default textured_pei)}}",
             "filaments": "[{profile: 'Bambu PLA Basic'} or {type: 'PETG', brand: 'Bambu'|'Generic', variant: 'HF'}, "
-                         "color: '#RRGGBB', extruder: left|right|auto (H2D)}]; filament n = position n (1-based)",
+                         "color: '#RRGGBB'}]; filament n = position n (1-based)",
             "objects": "[{name, part, filament (1), orient ('as_is'), copies (1), at: [x, y] mm, settings}] or, for an "
                        "object made of several solids with their own filaments (one object, one brim): "
                        "{name, parts: [{name, part, filament}], orient, copies, at, settings}; or "
@@ -263,7 +263,7 @@ def validate_study(st, base_dir: str | Path | None = None, vendor: P.Vendor | No
         errors.append(f"unknown keys {sorted(unknown)}; a study has {sorted(STUDY_KEYS)}")
     pr = st.get("printer")
     if not isinstance(pr, dict) or not pr.get("model"):
-        errors.append("printer: give {'model': 'H2D'|'H2S'|'P2S', 'nozzle': 0.4}")
+        errors.append("printer: give {'model': 'H2S'|'P2S', 'nozzle': 0.4}")
     elif "nozzle" in pr and not _num(pr["nozzle"]):
         errors.append("printer.nozzle: a number in mm (0.2, 0.4, 0.6, 0.8)")
     fils = st.get("filaments")
@@ -271,13 +271,12 @@ def validate_study(st, base_dir: str | Path | None = None, vendor: P.Vendor | No
         errors.append("filaments: a list of {'profile': 'Bambu PLA Basic'} or {'type': 'PLA', ...}")
         fils = []
     for i, f in enumerate(fils):
-        bad = set(f) - {"profile", "type", "brand", "variant", "color", "extruder"}
+        bad = set(f) - {"profile", "type", "brand", "variant", "color"}
         if bad:
-            errors.append(f"filaments[{i}]: unknown keys {sorted(bad)}")
+            errors.append(f"filaments[{i}]: unknown keys {sorted(bad)}"
+                          + ("; 'extruder' was for the H2D, which is not supported" if "extruder" in bad else ""))
         if f.get("color") and not re.fullmatch(r"#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?", str(f["color"])):
             errors.append(f"filaments[{i}].color: '#RRGGBB'")
-        if f.get("extruder", "auto") not in ("left", "right", "auto"):
-            errors.append(f"filaments[{i}].extruder: 'left', 'right' or 'auto'")
     objs = st.get("objects")
     if not isinstance(objs, list) or not objs:
         errors.append("objects: a list of {'part': {'step': path}, 'filament': 1, ...}")
@@ -431,7 +430,7 @@ def validate_study(st, base_dir: str | Path | None = None, vendor: P.Vendor | No
 
 def mix_temperature(st: dict, r: dict) -> list[str]:
     """OrcaSlicer refuses filaments with different temperatures on one nozzle (-62) unless allowed.
-    Returns errors (one-nozzle printers) and appends warnings to r['warnings'] (H2D)."""
+    Returns errors, and appends a warning to r['warnings'] when allow_mix_temp lets them through."""
     fils = r["filaments"]
     used = sorted({f for o in st.get("objects") or [] if isinstance(o, dict) for f in object_filaments(o)})
     if len(used) < 2:
@@ -458,31 +457,15 @@ def mix_temperature(st: dict, r: dict) -> list[str]:
                         bad.append((a, b))
         return bad
 
-    if r["model"]["extruders"] == 1:
-        bad = clash(used)
-        if bad and not st.get("allow_mix_temp"):
-            return [f"filaments {bad[0][0]} ({temps[bad[0][0]]:g} C) and {bad[0][1]} ({temps[bad[0][1]]:g} C) are "
-                    f"outside each other's temperature range: OrcaSlicer refuses them on one nozzle "
-                    f"(FILAMENTS_DIFFERENT_TEMP). Use compatible filaments, or set allow_mix_temp: true (one bed "
-                    f"temperature for all)"]
-        if bad:
-            r["warnings"].append(f"allow_mix_temp: filaments {bad} share one nozzle and one bed outside each other's "
-                                 f"temperature range")
-        return []
-    fmap = r.get("filament_map")
-    if not fmap:
-        if clash(used):
-            r["warnings"].append(f"filaments {clash(used)} have incompatible temperatures: give them different extruders "
-                                 f"(filaments[].extruder 'left'/'right'); the automatic map may put them on one nozzle")
-        return []
-    groups = {}
-    for i in used:
-        groups.setdefault(fmap[i - 1], []).append(i)
-    for ext, ids in groups.items():
-        bad = clash(ids)
-        if bad and not st.get("allow_mix_temp"):
-            return [f"filaments {bad[0][0]} and {bad[0][1]} have incompatible temperatures and share the "
-                    f"{'left' if ext == 1 else 'right'} nozzle: put them on different extruders, or set allow_mix_temp: true"]
+    bad = clash(used)
+    if bad and not st.get("allow_mix_temp"):
+        return [f"filaments {bad[0][0]} ({temps[bad[0][0]]:g} C) and {bad[0][1]} ({temps[bad[0][1]]:g} C) are "
+                f"outside each other's temperature range: OrcaSlicer refuses them on one nozzle "
+                f"(FILAMENTS_DIFFERENT_TEMP). Use compatible filaments, or set allow_mix_temp: true (one bed "
+                f"temperature for all)"]
+    if bad:
+        r["warnings"].append(f"allow_mix_temp: filaments {bad} share one nozzle and one bed outside each other's "
+                             f"temperature range")
     return []
 
 

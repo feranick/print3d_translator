@@ -1,6 +1,6 @@
 """mcp_server.py — MCP server (stdio): lets LLM-based tools turn parts into checked Bambu Lab print files
 with OrcaSlicer. It never talks to a printer.
-Version: 2026.11.11.1
+Version: 2026.11.14.2
 
 Tools (all JSON):
   study_format      the study format: printer, filaments, objects, intent, overrides. Read it first.
@@ -24,15 +24,15 @@ try:  # MCP Python SDK 2.x
 except ImportError:  # 1.x
     from mcp.server.fastmcp import FastMCP as _Server
 
-INSTRUCTIONS = """print3d_translator turns parts into checked 3D-print files for Bambu Lab printers (H2D, H2S,
-P2S) with OrcaSlicer: one study = one plate (printer, nozzle, plate type, filaments, objects, intent). Parts
-are STEP, STL or 3MF files, build123d-translator goals, or b3dt results ({'b3dt': {step, volume}}). The
+INSTRUCTIONS = """print3d_translator turns parts into checked 3D-print files for Bambu Lab printers (P2S, H2S:
+one nozzle, AMS multi-filament; the H2D is not supported) with OrcaSlicer: one study = one plate (printer,
+nozzle, plate type, filaments, objects, intent). Parts are STEP, STL or 3MF files, build123d-translator goals, or b3dt results ({'b3dt': {step, volume}}). The
 translator flattens OrcaSlicer's profiles, orients and places the parts (and the prime tower), slices, and
 checks the result independently. It writes files only: it never sends anything to a printer.
 Workflow: call study_format once and follow its conventions; validate_studies and fix every error;
 run_studies (most plates finish in seconds; slow ones come back 'pending': collect with study_status).
 Before using a result check 'reliable' (false: do not print it; 'unreliable_because' says why), 'warnings'
-(unsupported regions, long bridges, thin walls, small bed contact, shared nozzle, hot bed) and 'checks'.
+(unsupported regions, long bridges, thin walls, small bed contact, hot bed) and 'checks'.
 unsupported_extrusion fails when part of a layer has nothing below it (a feature starting in mid-air, a
 cantilever): enable supports ("tree") or orient the part differently, and say where it was (z, xy).
 The file to print is files.gcode_3mf: the user prints it from the printer's SD card, Bambu Studio or Handy.
@@ -41,8 +41,8 @@ an object of several solids with their own filaments: objects[].parts [{name, pa
 project: objects[].from_3mf {path, plate} (positions, part filaments, per-object settings); per-object
 settings: objects[].settings; layout {overlap: 'first_layer', gap, brims_may_overlap} for nested plates;
 intent.color_changes [{z, filament}] and intent.pauses [{z}]; accept [{check, object, z_range, reason}] for a
-known finding accepted on purpose (it stays listed); H2D filaments take
-extruder 'left'/'right'; filaments at different temperatures on one nozzle need allow_mix_temp: true;
+known finding accepted on purpose (it stays listed); filaments at different temperatures need
+allow_mix_temp: true;
 give each filament a color (flush volumes depend on it); intent.supports "needed" slices without supports and
 again with tree supports only if something would have nothing below it (supports_decision says which and why); "view": true (or make_view) writes a 3D view to open in a browser.
 Polling costs tokens: when a run needs more than about 5 minutes, tell the user when it should finish and stop.
@@ -94,7 +94,7 @@ def get_inputs(study: dict, name: str = "study") -> dict:
 
 @server.tool()
 def run_benchmarks(names: list[str] | None = None, wait_s: float = 45) -> dict:
-    """Benchmark studies with known answers (P2S cube, H2S copies with brim, H2D two filaments) as one
+    """Benchmark studies with known answers (P2S cube, H2S copies with brim, P2S two filaments) as one
     request; returns within wait_s (<= 50): passed, failed, pending. Collect with bench_status."""
     return api.bench(names, wait=min(max(float(wait_s), 0.0), 50.0))
 

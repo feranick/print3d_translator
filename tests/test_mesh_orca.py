@@ -1,6 +1,6 @@
 """Tests of mesh.py and orca.py without OrcaSlicer (a fake executable stands in for it), and one real
 slice when OrcaSlicer is installed (skipped otherwise).
-Version: 2026.10.24.2
+Version: 2026.11.14.2
 """
 import json
 import os
@@ -66,12 +66,12 @@ def test_assemble_list_and_command(tmp_path):
     assert o["need_arrange"] is False and o["objects"][0]["filaments"] == [2]
     assert o["objects"][0]["pos_x"] == [0.0] and o["objects"][0]["count"] == 1
     argv = orca.command("orca", tmp_path, "m.json", "p.json", ["f1.json", "f2.json"], "a.json",
-                        "Textured PEI Plate", [2, 1])
+                        "Textured PEI Plate")
     assert argv[argv.index("--load-settings") + 1] == "m.json;p.json"
     assert argv[argv.index("--load-filaments") + 1] == "f1.json;f2.json"
     assert argv[argv.index("--curr-bed-type") + 1] == "Textured PEI Plate"
     assert argv[argv.index("--export-3mf") + 1] == "plate.gcode.3mf"            # relative to --outputdir
-    assert argv[argv.index("--filament-map") + 1] == "2,1"
+    assert "--filament-map" not in argv                                           # one nozzle: no extruder map
     assert "--min-save" not in argv
     # no option that would reach a printer or the network
     assert not any(a for a in argv if any(w in a.lower() for w in ("upload", "send", "host", "cloud", "print_host")))

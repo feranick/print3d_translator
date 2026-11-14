@@ -1,5 +1,5 @@
 """api.py — what the CLI and the MCP server call. JSON in, JSON out.
-Version: 2026.11.11.7
+Version: 2026.11.14.2
 
     tool_status()                 versions; OrcaSlicer and its profiles found or not; build123d
     study_format()                the study format (with tool_status), for the caller to read
@@ -184,7 +184,7 @@ def summarize(res: dict, path: str | None = None) -> dict:
            "why": res.get("why"), "errors": res.get("errors"), "warnings": res.get("warnings"),
            "result": path, "files": res.get("files"), "estimate": res.get("estimate"),
            "printer": res.get("printer"),
-           "profiles": {k: prof.get(k) for k in ("machine", "process", "filaments", "filament_map", "set", "orca_version")},
+           "profiles": {k: prof.get(k) for k in ("machine", "process", "filaments", "set", "orca_version")},
            "objects": objs, "placement": res.get("placement"), "checks_failed": failed,
            "checks_passed": sorted(k for k, v in checks.items() if v.get("passed")),
            "expect": res.get("expect"), "slicer": res.get("slicer"), "seconds": res.get("seconds")}
@@ -248,7 +248,7 @@ def inputs(study: dict, name: str = "study", base_dir: str | None = None) -> dic
         return {"ok": False, "errors": [str(e)]}
     r = ctx["resolved"]
     return {"ok": True, "folder": str(d), "profiles": {**r["names"], "set": r["set"], "files": ctx["files"]},
-            "objects": ctx["objects"], "tower": ctx["tower"], "filament_map": ctx["fmap"],
+            "objects": ctx["objects"], "tower": ctx["tower"],
             "command": ctx["argv"], "assemble_list": str(d / "assemble.json"), "warnings": ctx["warnings"]}
 
 
@@ -298,9 +298,9 @@ def bench_studies() -> dict:
         "h2s_fine_copies": {"printer": {"model": "H2S", "nozzle": 0.4}, "filaments": [{"profile": "Bambu PETG HF"}],
                             "objects": [{"name": "slab", "part": {"stl": str(slab)}, "copies": 3}],
                             "intent": {"preset": "fine", "brim": 3}},
-        "h2d_two_filaments": {"printer": {"model": "H2D", "nozzle": 0.4},
-                              "filaments": [{"profile": "Bambu PLA Basic", "color": "#FF0000", "extruder": "left"},
-                                            {"profile": "Bambu PETG HF", "color": "#0000FF", "extruder": "right"}],
+        "p2s_two_filaments": {"printer": {"model": "P2S", "nozzle": 0.4},
+                              "filaments": [{"profile": "Bambu PLA Basic", "color": "#FFFFFF"},
+                                            {"profile": "Bambu PLA Basic", "color": "#1E88E5"}],
                               "objects": [{"name": "a", "part": {"stl": str(small)}, "filament": 1},
                                           {"name": "b", "part": {"stl": str(small)}, "filament": 2}],
                               "expect": [{"quantity": "gcode.layers", "value": 50, "tol": 0}]},
