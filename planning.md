@@ -119,6 +119,7 @@ OrcaSlicer versions are in the README; this file keeps decisions, setup, lessons
   `tools/compare_bambu.py` gains the multi-filament comparison and an HTML report (for a P2S GUI export).
   **2026.11.14.3:** cabin C2 (two PLA colours) sliced in OrcaSlicer 2.5.1's GUI vs p3dt: 69 same, 4 close,
   1 difference (`filament_maps` "1" vs the GUI's "1 1"), now padded by `finalize()` as the GUI writes it.
+  Fresh slice with the fix (run_20261114_185700_3a3a26): 71 same, 3 close (time 5 s, volumes 0.2 mm³), 0 differ.
 
 ## Open
 
