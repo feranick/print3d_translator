@@ -516,3 +516,4 @@ One study = one plate. JSON, `{name: study}`. Units: mm, °C, %, mm/s.
     - rename to orcaslicer-src at tag v2.5.1;
     - tools/orca_keys.py → orca_keys-2.5.1.json (then copy to orca_keys.json);
     - P3DT_ORCA_PROFILES path in .bash_profile and the Claude config.
+- 2026-11-14: data/orca_keys-2.5.1.json generated from v2.5.1's PrintConfig.cpp: identical to 2.5.0 (995 keys, none added, removed or changed); copied to data/orca_keys.json (pinned).
