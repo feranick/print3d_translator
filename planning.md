@@ -517,3 +517,7 @@ One study = one plate. JSON, `{name: study}`. Units: mm, °C, %, mm/s.
     - tools/orca_keys.py → orca_keys-2.5.1.json (then copy to orca_keys.json);
     - P3DT_ORCA_PROFILES path in .bash_profile and the Claude config.
 - 2026-11-14: data/orca_keys-2.5.1.json generated from v2.5.1's PrintConfig.cpp: identical to 2.5.0 (995 keys, none added, removed or changed); copied to data/orca_keys.json (pinned).
+- 2026-11-14: **2.5.1 setup complete.**
+  - The MCP server reads ~/Software/orcaslicer-src (tag v2.5.1); profiles_version 02.08.00.16 = installed 2.8.0.16; pinned keys = 2.5.1.
+  - Bench 3/3 (bench_20261114_180701_3d144a), identical to 2.5.0.
+  - Future updates: README "OrcaSlicer versions" (git checkout of the new tag in orcaslicer-src, orca_keys.py, pin, bench); no config edits needed.
