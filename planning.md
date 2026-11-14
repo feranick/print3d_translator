@@ -508,3 +508,11 @@ One study = one plate. JSON, `{name: study}`. Units: mm, °C, %, mm/s.
   - Cabin C3 colour change + pause through MCP: reliable (run_20261111_140121_b54ae3).
   - b3dt: null in the MCP status was never caused by the config change. The MCP server runs from the project's .venv (Python 3.12: build123d 0.13.0, no build123d-translator); the shell's python has it. Fix: install it into .venv. 2026.11.11.7: status shows 'python' and a b3dt_hint.
 - 2026-11-11: **b3dt goals through MCP (2026.11.11.7, OrcaSlicer 2.5.0).** build123d-translator 2026.10.28.1 installed in .venv. The s4_bracket goal was built inside the run (volume 49069.832 mm³ from b3dt, matching the earlier STEP chain's 49069.8): reliable, 20.7 g, 43 min; supports 'needed' → none (run_20261111_140950_a1cfce).
+- 2026-11-14: **OrcaSlicer 2.5.1 (2026.11.14.1).**
+  - **Release notes:** no CLI or profile-format change relevant to p3dt. The CLI now writes one nozzle_volume_type per nozzle (H2D; finalize already expanded it). Height ranges are per copy. Bambu vendor profiles are unchanged (02.08.00.16).
+  - **Code:** PINNED 2.5.1. orca.version cached per (exe, mtime): the running MCP server had kept reporting 2.5.0 after the app update. One version-independent profile checkout, ~/Software/orcaslicer-src, switched by tag.
+  - **Verified through MCP** (still on the 2.5.0 checkout and the 2.5.0 keys, the same vendor profiles): bench 3/3 (bench_20261114_175232_32df58), identical to 2.5.0. Cabin C2 parts and C3 colour change + pause reliable (run_20261114_175421_6beaa6), identical to 2.5.0.
+  - **Pending on the Mac:**
+    - rename to orcaslicer-src at tag v2.5.1;
+    - tools/orca_keys.py → orca_keys-2.5.1.json (then copy to orca_keys.json);
+    - P3DT_ORCA_PROFILES path in .bash_profile and the Claude config.

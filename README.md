@@ -39,7 +39,7 @@ pip install -e ".[test,cad,mcp]"          # cad: STEP and b3dt parts (build123d)
 pytest -q
 ```
 
-- **Backend:** OrcaSlicer 2.5.0 (pinned; 2.4.2 still works). On macOS, install `OrcaSlicer.app` in `/Applications`.
+- **Backend:** OrcaSlicer 2.5.1 (pinned; 2.5.0 and 2.4.2 still work). On macOS, install `OrcaSlicer.app` in `/Applications`.
 - **Profiles:** OrcaSlicer 2.5 ships its vendor profiles compiled (`BBL.opc`), so the translator reads the JSON profiles of the same version from its source tag. Set `P3DT_ORCA_PROFILES` to them, both in your shell and in the MCP server's environment (see "OrcaSlicer versions"). `p3dt status` shows the profiles read and whether their vendor version matches the installed OrcaSlicer's; a run with a mismatch carries a warning.
 - **Other installs:** set `P3DT_ORCA` (the executable). For OrcaSlicer 2.4.2, `P3DT_ORCA_PROFILES` is only needed if its `resources/profiles` (the folder with `BBL.json`) is not next to the executable.
 - **Linux:** the extracted AppImage works (`squashfs-root/AppRun`) and needs no display. Its release build is for Ubuntu 24.04 or later.
@@ -221,27 +221,32 @@ A benchmark passes when the result is reliable and its expected values hold.
 
 ## OrcaSlicer versions
 
-The translator is pinned to OrcaSlicer 2.5.0 (`p3dt status`: `version`, `pinned`, `matches`). It also runs 2.4.2. The setting names come from `data/orca_keys-<version>.json` for the version found (`data/orca_keys.json` is the pinned one).
+The translator is pinned to OrcaSlicer 2.5.1 (`p3dt status`: `version`, `pinned`, `matches`). It also runs 2.5.0 and 2.4.2. The setting names come from `data/orca_keys-<version>.json` for the version found (`data/orca_keys.json` is the pinned one).
 
-OrcaSlicer 2.5 ships its vendor profiles compiled into one binary file per vendor (`resources/profiles/BBL.opc`). The translator reads the JSON profiles of the same version instead, from its source tag. It follows 2.5's profile `include` templates, which hold the machine G-code and the filament variant values. Setup for 2.5.0:
+OrcaSlicer 2.5 ships its vendor profiles compiled into one binary file per vendor (`resources/profiles/BBL.opc`). The translator reads the JSON profiles of the same version instead, from a sparse checkout of OrcaSlicer's source at the matching tag. It follows 2.5's profile `include` templates, which hold the machine G-code and the filament variant values. One checkout serves every version (switch its tag), so `P3DT_ORCA_PROFILES` never changes:
 
 ```bash
 cd ~/Software
-git clone --depth 1 --branch v2.5.0 --filter=blob:none --no-checkout https://github.com/OrcaSlicer/OrcaSlicer.git orca-2.5.0-src
-cd orca-2.5.0-src
+git clone --depth 1 --branch v2.5.1 --filter=blob:none --no-checkout https://github.com/OrcaSlicer/OrcaSlicer.git orcaslicer-src
+cd orcaslicer-src
 git sparse-checkout set --no-cone resources/profiles/BBL.json resources/profiles/BBL/ src/libslic3r/PrintConfig.cpp
 git checkout
-echo 'export P3DT_ORCA_PROFILES=$HOME/Software/orca-2.5.0-src/resources/profiles' >> ~/.bash_profile   # or ~/.zshrc
+echo 'export P3DT_ORCA_PROFILES=$HOME/Software/orcaslicer-src/resources/profiles' >> ~/.bash_profile   # or ~/.zshrc
 ```
 
-For the MCP server, add `"env": {"P3DT_ORCA_PROFILES": "/Users/<you>/Software/orca-2.5.0-src/resources/profiles"}` to its entry in Claude's configuration and restart Claude.
+For the MCP server, add `"env": {"P3DT_ORCA_PROFILES": "/Users/<you>/Software/orcaslicer-src/resources/profiles"}` to its entry in Claude's configuration and restart Claude.
 
-**When OrcaSlicer is updated:**
-1. Check out the matching source tag.
-2. Run `python tools/orca_keys.py <src>/src/libslic3r/PrintConfig.cpp <version>`; add `--pinned` to make it the default.
-3. Run `p3dt bench`.
+**When OrcaSlicer is updated (e.g. to X.Y.Z):**
 
-`p3dt status` warns when the JSON profiles' vendor version differs from the installed OrcaSlicer's.
+```bash
+cd ~/Software/orcaslicer-src && git fetch --depth 1 origin tag vX.Y.Z && git checkout vX.Y.Z
+cd ~/Software/print3d_translator
+python tools/orca_keys.py ~/Software/orcaslicer-src/src/libslic3r/PrintConfig.cpp X.Y.Z   # data/orca_keys-X.Y.Z.json
+python -m print3d_translator.cli status    # version X.Y.Z; profiles_version match true
+python -m print3d_translator.cli bench
+```
+
+Then pin it: `PINNED` in `orca.py`, and copy `data/orca_keys-X.Y.Z.json` to `data/orca_keys.json`. `p3dt status` and every run warn when the JSON profiles' vendor version differs from the installed OrcaSlicer's. The version is re-read when the OrcaSlicer executable changes, so a running MCP server notices an update.
 
 ## Placement
 
@@ -367,6 +372,7 @@ OrcaSlicer's profiles are AGPL-3.0, so they are read from the installed OrcaSlic
 
 | Version | Changes |
 |---|---|
+| 2026.11.14.1 | Pinned to OrcaSlicer 2.5.1 (Bambu vendor profiles unchanged: 02.08.00.16). The OrcaSlicer version is cached per executable and its modification time, so a running MCP server sees an update. One version-independent profile checkout (`~/Software/orcaslicer-src`, switched by tag); update procedure in "OrcaSlicer versions". |
 | 2026.11.11.7 | `status` shows the Python in use and, when build123d-translator is missing from it, how to install it there (the MCP server runs from the project's `.venv`, not the shell's Python). |
 | 2026.11.11.6 | Pinned to OrcaSlicer 2.5.0 (2.4.2's setting names kept in `data/orca_keys-2.4.2.json`). `status` and every run compare the vendor version of the JSON profiles read with the installed OrcaSlicer's (its compiled `BBL.opc`), and warn on a mismatch. Verified on the Mac: bench 3/3 on 2.5.0 and 2.4.2; the cabin plates, the colour change with a pause, and A350 plate 1 give the same results on both. |
 | 2026.11.11.5 | OrcaSlicer 2.5 support:

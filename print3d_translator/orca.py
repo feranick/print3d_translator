@@ -1,6 +1,6 @@
 """orca.py — the OrcaSlicer command line: find it, tell its version, build the command, run it in its
 own process group with a timeout and a cancel flag, and decode its exit status.
-Version: 2026.11.11.6
+Version: 2026.11.14.1
 
 The translator never asks OrcaSlicer to do anything but slice files: no printer, network or cloud
 options are ever passed. Geometry comes in through an assemble list (--load-assemble-list): one STL
@@ -19,7 +19,7 @@ import time
 from functools import lru_cache
 from pathlib import Path
 
-PINNED = "2.5.0"
+PINNED = "2.5.1"
 
 # OrcaSlicer 2.4.2 src/libslic3r/Utils.hpp; the process exit status is the code mod 256
 EXIT_CODES = {
@@ -81,9 +81,18 @@ def find_orca() -> str | None:
     return None
 
 
-@lru_cache(maxsize=8)
 def version(exe: str) -> str | None:
-    """'2.4.2' from the first line of --help ('OrcaSlicer-2.4.2:'), or None."""
+    """'2.5.1' from the first line of --help ('OrcaSlicer-2.5.1:'), or None. Cached per executable and its
+    modification time: a long-running server sees an updated OrcaSlicer without a restart."""
+    try:
+        stamp = os.stat(exe).st_mtime_ns
+    except OSError:
+        stamp = None
+    return _version(exe, stamp)
+
+
+@lru_cache(maxsize=8)
+def _version(exe: str, stamp) -> str | None:
     try:
         out = subprocess.run([exe, "--help"], capture_output=True, text=True, timeout=60,
                              stdin=subprocess.DEVNULL)
@@ -229,3 +238,6 @@ def _kill_group(p: subprocess.Popen) -> None:
         except ProcessLookupError:
             pass
         p.wait()
+
+
+version.cache_clear = _version.cache_clear     # tests clear the cache
