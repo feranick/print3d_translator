@@ -237,7 +237,7 @@ REAL = orca.find_orca() if not os.environ.get("P3DT_ORCA") else None
 def test_real_bench_cube(tmp_path, monkeypatch):
     monkeypatch.setenv("P3DT_OUT", str(tmp_path))
     out = api.bench(["p2s_cube"], wait=300)
-    assert out["passed"] == ["p2s_cube"], out
+    assert out["passed"] == ["p2s_cube"], {k: (v.get("why"), v.get("expect")) for k, v in out.get("cases", {}).items()}
 
 
 def test_explicit_profiles_setting_has_no_fallback(fake, monkeypatch):
