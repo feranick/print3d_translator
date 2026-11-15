@@ -126,7 +126,23 @@ OrcaSlicer versions are in the README; this file keeps decisions, setup, lessons
 ## Open
 
 - **A real print** of the tree-support cradle; preview and skip-object on the printer still to be checked.
-- **A two-colour print** of a p3dt file on the P2S (cabin C2) to confirm the AMS changes on the printer.
-- **Printer status tool** (separate, read-only, outside p3dt): to be designed.
+- **ACTION (user, when the printer is free): print the two-colour test tile** on the P2S:
+  `~/p3dt_runs/run_20261114_190244_65a951/two_colour_tile/two_colour_tile.gcode.3mf` (30 × 30 × 4 mm, white
+  to 2.0 mm then blue; ~18 min, 3.2 g). AMS: filament 1 → white PLA Basic, filament 2 → blue. Check: plate
+  preview on the screen, skip-object lists the tile, one change after the layer at 2.0 mm, prime tower at the
+  back left, white base / blue top. Then the bigger one if wanted: cabin C2
+  (`run_20261114_185700_3a3a26/cab_C2_parts/cab_C2_parts.gcode.3mf`, 2h50m, 28 g).
+- **Printer status GUI** (`status/bstat`, read-only, not imported by p3dt), IN PROGRESS (paused 2026-11-14).
+  Decided: test LAN first (MQTT 8883, user bblp + access code; P2S may need LAN Only + Developer Mode, which
+  stops Cloud/Handy); all three front-ends (web page, terminal, Tk window); shows progress, temps, fans,
+  AMS, errors (HMS text from the slicers' local hms files), camera (port 6000, if allowed); only publish =
+  'pushall' status request (can be turned off). Written: `__init__`, config, state (merge/normalize), hms,
+  client (Link), camera, monitor (+ demo/replay), web, page.html, tui.py, gui.py (Tk; Homebrew Python may
+  need python-tk), cli.py (`bstat config|probe|web|tui|gui`, probe records to ~/p3dt_runs/bstat/),
+  status/pyproject.toml (paho-mqtt). None of it run yet. To do: tests (status/tests: merge/normalize,
+  only-pushall-publish, render of tui/page in demo), README, run in the sandbox with PYTHONPATH=/tmp/pylib
+  (paho installed there; pytest --basetemp=/tmp/pt), commit; then the user: `pip install -e status/`,
+  `bstat web --demo`, `bstat config ...`, `bstat probe`.
+  Note: the sandbox disk (/sessions) is full, which caused the transient pytest errors there.
 - Ideas: `orient: "min_support"` (search rotations by unsupported area); suggest an orientation when supports
   are `none` and regions fail; support enforcers/blockers from flagged regions (needs painted 3MF input and a CLI spike).

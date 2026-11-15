@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bstat"
+version = "2026.11.14.1"
+description = "Read-only status monitor for a Bambu Lab printer on the local network (web page, terminal, window)"
+requires-python = ">=3.10"
+dependencies = ["paho-mqtt>=2.0"]
+
+[project.optional-dependencies]
+camera = ["pillow"]
+test = ["pytest"]
+
+[project.scripts]
+bstat = "bstat.cli:main"
+
+[tool.setuptools]
+packages = ["bstat"]
+
+[tool.setuptools.package-data]
+bstat = ["page.html"]
