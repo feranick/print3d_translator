@@ -27,8 +27,10 @@ USER = "bblp"
 PUSHALL = {"pushing": {"sequence_id": "0", "command": "pushall"}}
 PUSHALL_EVERY_S = 300
 REFUSED = {4: "bad user name or password: check the access code (it changes when LAN mode is toggled)",
-           5: "not authorized: the printer refuses LAN clients in this mode. On the P2S, LAN access for other "
-              "programs needs LAN Only Mode + Developer Mode (Settings > Network); Bambu Cloud and Handy stop working there"}
+           5: "not authorized: either the access code is wrong, or the printer refuses LAN clients in this mode. On the "
+              "P2S, LAN access for other programs may need LAN Only Mode + Developer Mode (Settings > Network); "
+              "Bambu Cloud and Handy stop working there"}
+REFUSED[134], REFUSED[135] = REFUSED[4], REFUSED[5]      # paho 2 reports MQTT 3.1.1 codes 4 / 5 as 134 / 135
 
 
 class Link:

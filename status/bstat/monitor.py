@@ -131,7 +131,7 @@ def demo_full() -> dict:
 
 def demo_tick(k: float) -> dict:
     layer = 1 + int(k * 19)
-    out = {"print": {"mc_percent": int(k * 100), "layer_num": layer, "mc_remaining_time": max(0, int(18 * (1 - k))),
+    out = {"print": {"mc_percent": round(k * 100), "layer_num": layer, "mc_remaining_time": max(0, int(18 * (1 - k))),
                      "nozzle_temper": round(220 + math.sin(time.time()) * 0.6, 1),
                      "bed_temper": round(55 + math.sin(time.time() / 3) * 0.3, 1),
                      "ams": {"tray_now": "0" if layer <= 10 else "1"}}}

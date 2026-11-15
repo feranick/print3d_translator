@@ -367,6 +367,7 @@ print3d_translator/   profiles.py geometry.py placement.py orca.py gcode.py gcod
 tools/                orca_keys.py (key data from OrcaSlicer's PrintConfig.cpp), spike.py (real-CLI experiments),
                       compare_bambu.py (GUI export vs p3dt, HTML report), support_corpus.py
 docs/H2D.md           the removed H2D support: what it was, what was learned, how to bring it back
+status/               bstat, a separate read-only printer status monitor (web page, terminal, window); see status/README.md
 tests/                fixtures/profiles (hand-written), fake_orca.py, test_*.py
 examples/studies.json
 planning.md           session context and state log

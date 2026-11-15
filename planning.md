@@ -122,6 +122,8 @@ OrcaSlicer versions are in the README; this file keeps decisions, setup, lessons
   Fresh slice with the fix (run_20261114_185700_3a3a26): 71 same, 3 close (time 5 s, volumes 0.2 mm³), 0 differ.
   Colour change at exactly a layer top (tile 30×30×4, z 2.0): OrcaSlicer switches by the layer's middle; the
   `tools` check used the layer top and failed it; fixed (and fake_orca). Test print: test_parts/tile30x30x4.stl.
+  **bstat** (status/): read-only printer status monitor (web, terminal, window), first version, not yet run
+  against the P2S.
 
 ## Open
 
@@ -132,17 +134,12 @@ OrcaSlicer versions are in the README; this file keeps decisions, setup, lessons
   preview on the screen, skip-object lists the tile, one change after the layer at 2.0 mm, prime tower at the
   back left, white base / blue top. Then the bigger one if wanted: cabin C2
   (`run_20261114_185700_3a3a26/cab_C2_parts/cab_C2_parts.gcode.3mf`, 2h50m, 28 g).
-- **Printer status GUI** (`status/bstat`, read-only, not imported by p3dt), IN PROGRESS (paused 2026-11-14).
-  Decided: test LAN first (MQTT 8883, user bblp + access code; P2S may need LAN Only + Developer Mode, which
-  stops Cloud/Handy); all three front-ends (web page, terminal, Tk window); shows progress, temps, fans,
-  AMS, errors (HMS text from the slicers' local hms files), camera (port 6000, if allowed); only publish =
-  'pushall' status request (can be turned off). Written: `__init__`, config, state (merge/normalize), hms,
-  client (Link), camera, monitor (+ demo/replay), web, page.html, tui.py, gui.py (Tk; Homebrew Python may
-  need python-tk), cli.py (`bstat config|probe|web|tui|gui`, probe records to ~/p3dt_runs/bstat/),
-  status/pyproject.toml (paho-mqtt). None of it run yet. To do: tests (status/tests: merge/normalize,
-  only-pushall-publish, render of tui/page in demo), README, run in the sandbox with PYTHONPATH=/tmp/pylib
-  (paho installed there; pytest --basetemp=/tmp/pt), commit; then the user: `pip install -e status/`,
-  `bstat web --demo`, `bstat config ...`, `bstat probe`.
-  Note: the sandbox disk (/sessions) is full, which caused the transient pytest errors there.
+- **Printer status: `status/bstat`** (separate, read-only, not imported by p3dt; own version 2026.11.14.1;
+  status/README.md). Built: probe, web page, terminal dashboard, Tk window; demo and replay; HMS text from
+  the slicers' local hms files; camera on port 6000 (P1 protocol). Its only publish is `pushall`
+  (`--no-pushall`: nothing sent), checked by a test. Tested in the sandbox: 16 tests, including a fake
+  printer (MQTT over TLS, self-signed); the page's script run under node. **ACTION (user):** `pip install -e
+  status/`, `bstat web --demo`, `bstat config ...`, `bstat probe` with the P2S as it is now; then decide on
+  LAN Only + Developer Mode if refused. Then check the decoding against the recording in ~/p3dt_runs/bstat/.
 - Ideas: `orient: "min_support"` (search rotations by unsupported area); suggest an orientation when supports
   are `none` and regions fail; support enforcers/blockers from flagged regions (needs painted 3MF input and a CLI spike).
