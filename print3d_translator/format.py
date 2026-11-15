@@ -90,7 +90,7 @@ def study_format(status: dict | None = None) -> dict:
                        "supports": "none|auto|tree|needed (sliced without supports; again with tree supports only if "
                                    "something has nothing below it)", "support_angle": "degrees from horizontal (overhangs flatter "
                        "than this get support)", "brim": "none|auto|<width mm>", "seam": "aligned|back|nearest|random",
-                       "color_changes": "[{z, filament}]: from height z (mm) up, every object prints with that filament "
+                       "color_changes": "[{z, filament}]: from height z (mm) up (the layers whose middle is above z), every object prints with that filament "
                                         "(an AMS filament change; as OrcaSlicer height-range modifiers)",
                        "pauses": "[{z, note}]: pause the printer before the layer at height z (the machine's pause "
                                  "G-code, e.g. M400 U1), e.g. to insert magnets or change filament by hand"},

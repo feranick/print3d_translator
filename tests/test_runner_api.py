@@ -441,6 +441,11 @@ def test_color_change_and_pause(fake):
                       [{"name": "cube_1", "filament": 1, "tri": M.place(M.box(20, 20, 10), (128, 128))}],
                       color_changes=[{"z": 5, "filament": 1}])
     assert not r["checks"]["tools"]["passed"]
+    # the boundary: the layer printed at z 5.0 (4.8-5.0) keeps filament 1, the next one is filament 2
+    P_ = G.parse(text)
+    obj = (P_.seg_info[:, 0] == 1) & (P_.seg_info[:, 3] >= 0)
+    tool_at = {round(float(z), 3): int(t) + 1 for z, t in zip(P_.segments[obj, 4], P_.seg_info[obj, 1])}
+    assert tool_at[5.0] == 1 and tool_at[5.2] == 2
 
 
 def test_accept_a_known_unsupported_bridge(fake, monkeypatch):

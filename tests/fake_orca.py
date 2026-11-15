@@ -142,8 +142,9 @@ def main(argv):
         for o in [dict(ob, **p_, name=ob["name"], id=ob["id"]) for ob in objs for p_ in ob["parts"]]:
             if z > o["hi"][2] + 1e-6:
                 continue
-            for (z0, z1, t_) in o["ranges"]:           # height-range modifier with a filament
-                if z0 - 1e-6 <= z < z1 - 1e-6:
+            for (z0, z1, t_) in o["ranges"]:           # height-range modifier with a filament: by the
+                zm = z - (h1 if n == 0 else lh) / 2        # layer's middle (slice height), as OrcaSlicer does
+                if z0 - 1e-6 <= zm < z1 - 1e-6:
                     o["tool"] = t_
             if o["tool"] != cur:
                 L += [f"M620 S{o['tool']}A", f"T{o['tool']}", f"M104 S{temps[o['tool']][0 if n == 0 else 1]:g} T{o['tool']}",

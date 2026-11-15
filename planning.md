@@ -120,6 +120,8 @@ OrcaSlicer versions are in the README; this file keeps decisions, setup, lessons
   **2026.11.14.3:** cabin C2 (two PLA colours) sliced in OrcaSlicer 2.5.1's GUI vs p3dt: 69 same, 4 close,
   1 difference (`filament_maps` "1" vs the GUI's "1 1"), now padded by `finalize()` as the GUI writes it.
   Fresh slice with the fix (run_20261114_185700_3a3a26): 71 same, 3 close (time 5 s, volumes 0.2 mm³), 0 differ.
+  Colour change at exactly a layer top (tile 30×30×4, z 2.0): OrcaSlicer switches by the layer's middle; the
+  `tools` check used the layer top and failed it; fixed (and fake_orca). Test print: test_parts/tile30x30x4.stl.
 
 ## Open
 

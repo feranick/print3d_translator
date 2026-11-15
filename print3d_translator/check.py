@@ -1,7 +1,7 @@
 """check.py — independent checks of a sliced plate: the G-code (as gcode.py reads it) against the study,
 our flattened profiles and the placed geometry. Nothing here trusts OrcaSlicer's own summary; its
 estimates are only compared with ours.
-Version: 2026.11.14.2
+Version: 2026.11.14.3
 
 Each check is {passed, hard, why, got, expected, ...}. A failed hard check makes the result
 unreliable. The checks:
@@ -301,13 +301,17 @@ def check_gcode(P: G.Parsed, resolved: dict, objects: list[dict], tower_bbox: li
         m = printing & (obj_of_seg == k) & (cats == "object")
         per_obj[o["name"]] = sorted({int(t) + 1 for t in info[m, 1]})
         allowed = set(o.get("filaments") or [o["filament"]])
-        z = seg[:, 4]
+        # a layer belongs to a color change when its middle is above the change's z (OrcaSlicer assigns
+        # height ranges by the layer's slice height): with z 2.0 and 0.2 mm layers, the layer printed at
+        # 2.0 (1.8-2.0) keeps the old filament and the one at 2.2 has the new one
+        lh_o = _f((o.get("settings") or {}).get("layer_height"), _f(pv("layer_height"), 0.2))
+        z = seg[:, 4] - lh_o / 2
         t1 = info[:, 1] + 1
-        below = m & (z < changes[0]["z"] - TOL_Z) if changes else m
+        below = m & (z < changes[0]["z"] - 1e-6) if changes else m
         bad = int((below & ~np.isin(t1, sorted(allowed))).sum())
         for i, c in enumerate(changes):
             top = changes[i + 1]["z"] if i + 1 < len(changes) else 1e9
-            rng = m & (z >= c["z"] - TOL_Z) & (z < top - TOL_Z)
+            rng = m & (z >= c["z"] - 1e-6) & (z < top - 1e-6)
             bad += int((rng & (t1 != c["filament"])).sum())
         if bad:
             wrong[o["name"]] = bad
