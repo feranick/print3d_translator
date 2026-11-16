@@ -268,7 +268,7 @@ def test_view_written_by_study_and_by_api(fake):
 
 # ------------------------------------------------------------- objects of several parts, 3MF projects, layout
 
-def bambu_3mf(path, objects, plates=None):
+def bambu_3mf(path, objects, plates=None, project=None):
     """A Bambu-Studio-like project: objects [{id, name, at: (x, y), extruder, settings, parts: [{id, box, z0,
     extruder, subtype}]}], plates [[object ids]] (6 plates at most; bed 256)."""
     import zipfile
@@ -305,7 +305,8 @@ def bambu_3mf(path, objects, plates=None):
                                        f'<build>{"".join(items)}</build></model>')
         z.writestr("3D/Objects/o.model", f'<?xml version="1.0"?><model unit="millimeter" {ns}><resources>{"".join(sub)}</resources></model>')
         z.writestr("Metadata/model_settings.config", "\n".join(ms))
-        z.writestr("Metadata/project_settings.config", json.dumps({"printable_area": ["0x0", "256x0", "256x256", "0x256"]}))
+        z.writestr("Metadata/project_settings.config", json.dumps({"printable_area": ["0x0", "256x0", "256x256", "0x256"],
+                                                                   **(project or {})}))
     return path
 
 
@@ -504,3 +505,76 @@ def test_compare_bambu_multi_filament(fake, tmp_path):
     assert len(g["tool_changes"]) >= 1 and mf["gui"]["tower"]
     page = cb.html_report(mf, cb.compare(arch, arch))
     assert page.startswith("<!doctype html>") and "<svg" in page and "Filaments per layer" in page
+
+
+# ------------------------------------------------------------- 2026.11.16.1: flush volumes from the colours
+
+def black_white(tmp, **kw):
+    M.write_stl(tmp / "block.stl", M.box(20, 20, 5))
+    return p2s(tmp, filaments=[{"profile": "Bambu PLA Basic", "color": "#000000"},
+                               {"profile": "Bambu PLA Basic", "color": "#FFFFFF"}],
+               objects=[{"name": "black", "part": {"stl": str(tmp / "block.stl")}, "filament": 1},
+                        {"name": "white", "part": {"stl": str(tmp / "block.stl")}, "filament": 2}], **kw)
+
+
+def test_flush_matrix_from_colours_and_adequacy(fake):
+    """The CAT keychain: black + white sharing layers. Without flush settings the purge comes from the colours
+    (Bambu's model, multiplier 1): black -> white 670 mm3, written into the profile and checked."""
+    res = R.run_study("bw", black_white(fake), fake / "bw")
+    assert res["reliable"], res.get("unreliable_because")
+    assert res["profiles"]["set"]["process.flush_volumes_matrix"][1] == ["0", "670", "190", "0"]
+    assert res["profiles"]["set"]["process.flush_multiplier"][1] == ["1"]
+    fa = res["checks"]["flush_adequacy"]
+    assert fa["passed"]
+    t = {(r["from"], r["to"]): r for r in fa["got"]["transitions"]}
+    assert t[(1, 2)]["purge_mm3"] >= 600 and t[(1, 2)]["minimum_mm3"] == 603.0 and t[(1, 2)]["changes"] >= 20
+    tc = res["estimate"]["tool_changes"]
+    assert tc["total"] == sum(tc["by_transition"].values()) and set(tc["by_transition"]) == {"1->2", "2->1"}
+    assert res["checks"]["settings_roundtrip"]["passed"]
+
+
+def test_flush_too_small_fails_and_can_be_accepted(fake):
+    st = black_white(fake, overrides={"process": {"flush_volumes_matrix": [0, 140, 140, 0]}})
+    res = R.run_study("bw140", st, fake / "bw140")
+    fa = res["checks"]["flush_adequacy"]
+    assert not fa["passed"] and fa["hard"] and not res["reliable"]
+    assert "flush_adequacy" in " ".join(res["unreliable_because"]) and "#000000 -> #FFFFFF" in fa["problems"][0]
+    assert res["profiles"]["set"]["process.flush_multiplier"][1] == ["1"]        # the matrix is the volume used
+    ok = R.run_study("bw140a", {**st, "accept": [{"check": "flush_adequacy", "reason": "grey is fine here"}]}, fake / "bw140a")
+    assert ok["reliable"] and ok["accepted"][0]["check"] == "flush_adequacy"
+
+
+def test_orca_default_multiplier_is_caught(fake):
+    """What happened: OrcaSlicer's CLI default multiplier 0.3 (the matrix not written): 201 of 603 mm3."""
+    st = black_white(fake, overrides={"process": {"flush_multiplier": 0.3}})
+    res = R.run_study("bw03", st, fake / "bw03")
+    t = {(r["from"], r["to"]): r for r in res["checks"]["flush_adequacy"]["got"]["transitions"]}
+    assert t[(1, 2)]["purge_mm3"] == pytest.approx(201, abs=1) and not res["reliable"]
+
+
+def test_intent_flush_modes(fake):
+    from print3d_translator import profiles as P
+    v = P.Vendor(Path(__file__).parent / "fixtures" / "profiles")
+    base = {"printer": {"model": "P2S"}, "filaments": [{"profile": "Bambu PLA Basic", "color": "#000000"},
+                                                       {"profile": "Bambu PLA Basic", "color": "#FFFFFF"}]}
+    assert P.resolve(v, {**base, "intent": {"flush": 1.5}})["flush"]["matrix"] == [[0, 1005.0], [285.0, 0]]
+    assert P.resolve(v, {**base, "intent": {"flush": "max"}})["flush"]["matrix"] == [[0, 800.0], [800.0, 0]]
+    with pytest.raises(P.ProfileError, match="intent.flush"):
+        P.resolve(v, {**base, "intent": {"flush": "lots"}})
+    assert P.resolve(v, {**base, "filaments": base["filaments"][:1]})["flush"] is None
+
+
+def test_from_3mf_flush_keep_and_warning(fake):
+    p = fake / "cat.3mf"
+    bambu_3mf(p, [{"id": 1, "name": "Base", "at": (80, 128), "extruder": 1, "parts": [{"id": 1, "box": (20, 20, 4)}]},
+                  {"id": 2, "name": "Top", "at": (170, 128), "extruder": 2, "parts": [{"id": 1, "box": (20, 20, 4)}]}],
+              project={"filament_colour": ["#000000", "#FFFFFF"], "flush_volumes_matrix": ["0", "760", "190", "0"],
+                       "flush_multiplier": ["1"]})
+    fil = [{"profile": "Bambu PLA Basic", "color": "#000000"}, {"profile": "Bambu PLA Basic", "color": "#FFFFFF"}]
+    auto = R.run_study("c1", p2s(fake, filaments=fil, objects=[{"from_3mf": {"path": str(p)}}]), fake / "c1")
+    assert any("project purges more" in w and "1->2: project 760 vs 670" in w for w in auto["warnings"])
+    keep = R.run_study("c2", p2s(fake, filaments=fil, objects=[{"from_3mf": {"path": str(p), "flush": "keep"}}]), fake / "c2")
+    assert keep["profiles"]["set"]["process.flush_volumes_matrix"][1] == ["0", "760", "190", "0"]
+    assert keep["ok"], keep.get("why")
+    assert keep["objects"]["Top_2"]["filament"] == 2         # a one-part 3MF object keeps its filament
+    assert keep["checks"]["flush_adequacy"]["passed"]

@@ -1,7 +1,7 @@
 """check.py — independent checks of a sliced plate: the G-code (as gcode.py reads it) against the study,
 our flattened profiles and the placed geometry. Nothing here trusts OrcaSlicer's own summary; its
 estimates are only compared with ours.
-Version: 2026.11.14.3
+Version: 2026.11.16.1
 
 Each check is {passed, hard, why, got, expected, ...}. A failed hard check makes the result
 unreliable. The checks:
@@ -26,6 +26,8 @@ unreliable. The checks:
                     more than SEVERE_MAX mm farther than reach + 1 mm (supports.unsupported)
   long_bridges      bridges (unsupported stretches held at both ends) up to BRIDGE_MAX mm (soft)
   estimates         OrcaSlicer's filament lengths and weights = ours (soft)
+  flush_adequacy    every filament change of the print purges at least flush.MIN_FRACTION of Bambu's
+                    colour-based volume for its two colours (soft below it; hard below half of it)
 """
 from __future__ import annotations
 
@@ -354,6 +356,10 @@ def check_gcode(P: G.Parsed, resolved: dict, objects: list[dict], tower_bbox: li
 
     # estimates (OrcaSlicer's vs ours)
     checks["estimates"], estimate = _estimates(P, fils, diam)
+    estimate["tool_changes"] = tool_changes(P)
+    fa = flush_adequacy(P, resolved, diam)
+    if fa:
+        checks["flush_adequacy"] = fa
     return {"checks": checks, "gcode": G.summary(P, diam), "estimate": estimate}
 
 
@@ -708,3 +714,65 @@ def verdict(checks: dict) -> tuple[bool, list[str]]:
     """(reliable, unreliable_because) from a {name: check} dict."""
     bad = [f"{k}: {v.get('why', '')}" for k, v in checks.items() if v.get("hard", True) and not v.get("passed")]
     return not bad, bad
+
+
+def tool_changes(P: G.Parsed) -> dict:
+    """Filament changes during the print: {total, by_transition: {'1->2': n}} (filaments 1-based; the first
+    load in the start G-code is not a change)."""
+    by, prev, total = {}, None, 0
+    for t in P.tool_changes:
+        if t["conditional"] or t["tool"] is None or t["tool"] < 0:
+            continue
+        if t["region"] == "print" and prev is not None and t["tool"] != prev:
+            k = f"{prev + 1}->{t['tool'] + 1}"
+            by[k] = by.get(k, 0) + 1
+            total += 1
+        if t["region"] != "end":
+            prev = t["tool"]
+    return {"total": total, "by_transition": dict(sorted(by.items()))}
+
+
+def flush_adequacy(P: G.Parsed, resolved: dict, diam: list[float]) -> dict | None:
+    """Each filament change of the print against Bambu's colour-based purge for its two colours (flush.py):
+    the firmware purge (';VG1 E' in the VFLUSH block of that change, x the incoming filament's cross-section)
+    must be at least flush.MIN_FRACTION of the model's volume. Below: a warning (soft); below
+    flush.HARD_FRACTION of that minimum: hard (the new colour comes out visibly mixed with the old one).
+    None with one filament."""
+    from . import flush as F
+    fils = resolved["filaments"]
+    if len(fils) < 2:
+        return None
+    colors = [(_list(f.get("filament_colour")) or ["#FFFFFF"])[0] for f in fils]
+    extra = _f(_first(resolved["machine"].get("nozzle_volume"), 0), 0.0)
+    events = [f for f in P.flushes if f["region"] == "print" and f["from"] is not None and f["to"] is not None
+              and f["from"] != f["to"] and 0 <= f["from"] < len(fils) and 0 <= f["to"] < len(fils)]
+    tc = tool_changes(P)
+    if not events:
+        if not tc["total"]:
+            return None
+        return _c(False, "every filament change purges enough for its colours", hard=False,
+                  got={"tool_changes": tc}, problems=["filament changes without a firmware purge (no VFLUSH block)"])
+    rows, problems, severe = {}, [], False
+    for e in events:
+        k = (e["from"], e["to"])
+        area = G.filament_area(diam[e["to"]] if e["to"] < len(diam) else 1.75)
+        rows.setdefault(k, []).append(e["e_mm"] * area)
+    out = []
+    for (a, b), vols in sorted(rows.items()):
+        need = F.minimum(colors[a], colors[b], extra)
+        lo = min(vols)
+        r = {"from": a + 1, "to": b + 1, "colors": [colors[a], colors[b]], "changes": len(vols),
+             "purge_mm3": round(lo, 1), "purge_mean_mm3": round(sum(vols) / len(vols), 1), "minimum_mm3": need,
+             "model_mm3": F.volume(colors[a], colors[b], extra), "ratio": round(lo / need, 2) if need else None}
+        out.append(r)
+        if need and lo < need - 0.5:
+            hard = lo < F.HARD_FRACTION * need
+            severe |= hard
+            problems.append(f"filament {a + 1} -> {b + 1} ({colors[a]} -> {colors[b]}): {lo:.0f} mm3 per change x "
+                            f"{len(vols)}, needs at least {need:.0f} mm3" + (" (less than half: the new colour comes "
+                            "out mixed with the old one)" if hard else ""))
+    ok = not problems
+    return _c(ok, "every filament change purges enough for its two colours (Bambu's colour-based volume x "
+                  f"{F.MIN_FRACTION:g}; hard below {F.HARD_FRACTION:g} of that). Fix: intent.flush 'auto' (the default) "
+                  "or a larger multiplier, or overrides.process.flush_volumes_matrix",
+              hard=severe, got={"transitions": out, "tool_changes": tc}, problems=problems)

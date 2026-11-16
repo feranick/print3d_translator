@@ -88,6 +88,8 @@ OrcaSlicer versions are in the README; this file keeps decisions, setup, lessons
   `finalize()` fills them as the GUI does (checked against GUI exports, S4).
 - **Firmware flushes** appear only as `;VG1 E` in VFLUSH blocks; prime lines and purge-chute moves go outside
   the bed → known zones exempted; totals compared with flushes counted.
+- **flush_multiplier defaults to 0.3** in OrcaSlicer (CLI and GUI; Bambu Studio 1.0): the colour matrix is right but
+  scaled down → p3dt writes the matrix and multiplier 1 itself (flush.py); `flush_adequacy` checks every change.
 - **Bed temperature** `by_first_filament` changes at layer 2 with mixed filaments (not a fault).
 - **Support-only layers** (normal supports) print at their own heights → layers and unsupported checks handle them.
 - **2.5:** `M104 T<n> S.. N0` idle-nozzle pre-heat/cool (`nozzle_standby`); some profile values invalid for Orca itself
@@ -124,6 +126,14 @@ OrcaSlicer versions are in the README; this file keeps decisions, setup, lessons
   `tools` check used the layer top and failed it; fixed (and fake_orca). Test print: test_parts/tile30x30x4.stl.
   **bstat** (status/): read-only printer status monitor (web, terminal, window), first version, not yet run
   against the P2S.
+- **2026-11-16:** a black + white CAT keychain came out grey: OrcaSlicer's CLI computes Bambu's colour matrix
+  (670 / 190 mm³) but keeps its default flush_multiplier 0.3 (201 / 57; the OrcaSlicer GUI does the same,
+  Bambu Studio uses 1.0). **2026.11.16.1:** p3dt writes the colour matrix (flush.py, Bambu's model, checked
+  against 12 OrcaSlicer matrices: 11 equal, orange -> black 215 vs Orca's 166, ours higher) with multiplier 1;
+  intent.flush; from_3mf.flush keep/warn; check flush_adequacy (0.9 x model; hard < 50%); estimate.tool_changes.
+  On the Mac (run_20261116_132755_3be2e7): CAT auto reliable, 670 mm³ per black -> white change, flush 4.21 m;
+  forced [0,140,140,0] unreliable (flush_adequacy hard); orange reliable. Also fixed: one-part 3MF objects lost
+  their filament.
 
 ## Open
 

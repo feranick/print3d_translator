@@ -12,5 +12,8 @@
     ],
     "max_layer_height": [
         "0.28"
+    ],
+    "nozzle_volume": [
+        "110"
     ]
 }

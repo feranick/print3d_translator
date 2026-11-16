@@ -114,6 +114,21 @@ def main(argv):
     while zs[-1] + lh <= top + 1e-6:
         zs.append(round(zs[-1] + lh, 4))
     tools = sorted({p_["tool"] for o in objs for p_ in o["parts"]} | {r[2] for o in objs for r in o["ranges"]})
+
+    def flush_mm(a, b):
+        """The firmware purge for a change a -> b (mm of filament), as OrcaSlicer 2.5's CLI does it: the
+        process's flush_volumes_matrix x flush_multiplier; without a matrix, Bambu's colour-based one x the
+        CLI's default multiplier 0.3; at least 41.5752 mm (100 mm3, the P2S change G-code's minimum)."""
+        from print3d_translator import flush as F
+        nf = len(fils)
+        mat = process.get("flush_volumes_matrix")
+        mult = float(first(process.get("flush_multiplier"), 0.3))
+        if mat and len(mat) >= nf * nf:
+            vol = float(mat[a * nf + b]) * mult
+        else:
+            cols = [(f.get("filament_colour") or ["#FFFFFF"])[0] for f in fils]
+            vol = F.volume(cols[a], cols[b], float(first(machine.get("nozzle_volume"), 0))) * 0.3
+        return max(vol / area_f, 41.5752)
     temps = {t: (first(fils[t].get("nozzle_temperature_initial_layer")) + (20 if "hot" in modes else 0),
                  first(fils[t].get("nozzle_temperature")) + (20 if "hot" in modes else 0)) for t in tools}
     beds = [first(fils[t].get(temp_key + "_initial_layer"), first(fils[t].get(temp_key))) for t in tools]
@@ -147,8 +162,10 @@ def main(argv):
                 if z0 - 1e-6 <= zm < z1 - 1e-6:
                     o["tool"] = t_
             if o["tool"] != cur:
-                L += [f"M620 S{o['tool']}A", f"T{o['tool']}", f"M104 S{temps[o['tool']][0 if n == 0 else 1]:g} T{o['tool']}",
-                      f"M621 S{o['tool']}A"]
+                fl = flush_mm(cur, o["tool"])
+                L += [f"M620 S{o['tool']}A", f"T{o['tool']}", "; VFLUSH_START", f";VG1 E{fl:.4f} F500", "; VFLUSH_END",
+                      f"M104 S{temps[o['tool']][0 if n == 0 else 1]:g} T{o['tool']}", f"M621 S{o['tool']}A"]
+                used[o["tool"]] += fl
                 cur = o["tool"]
                 if tower:
                     L += ["; FEATURE: Prime tower", f"G1 X{tower[0] + 2:.3f} Y{tower[1] + 2:.3f} Z{z}",

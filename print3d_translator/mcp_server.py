@@ -1,6 +1,6 @@
 """mcp_server.py — MCP server (stdio): lets LLM-based tools turn parts into checked Bambu Lab print files
 with OrcaSlicer. It never talks to a printer.
-Version: 2026.11.14.2
+Version: 2026.11.16.1
 
 Tools (all JSON):
   study_format      the study format: printer, filaments, objects, intent, overrides. Read it first.
@@ -43,7 +43,8 @@ settings: objects[].settings; layout {overlap: 'first_layer', gap, brims_may_ove
 intent.color_changes [{z, filament}] and intent.pauses [{z}]; accept [{check, object, z_range, reason}] for a
 known finding accepted on purpose (it stays listed); filaments at different temperatures need
 allow_mix_temp: true;
-give each filament a color (flush volumes depend on it); intent.supports "needed" slices without supports and
+give each filament its real color: the purge on each filament change is computed from the two colours
+(intent.flush, default 'auto'; flush_adequacy checks it, estimate.tool_changes counts the changes); intent.supports "needed" slices without supports and
 again with tree supports only if something would have nothing below it (supports_decision says which and why); "view": true (or make_view) writes a 3D view to open in a browser.
 Polling costs tokens: when a run needs more than about 5 minutes, tell the user when it should finish and stop.
 Units: mm, degrees C, %, mm/s, g, s."""

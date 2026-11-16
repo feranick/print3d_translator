@@ -321,3 +321,15 @@ def test_roundtrip_orca_2_5_spellings():
                      "filament_dev_ams_drying_temperature": ["45", "45", "65", "55"]}, keys)
     assert r["passed"], r["differ"]
     assert list(r["normalized_by_orca"]) == ["process.support_ironing_pattern"]
+
+
+def test_flush_model_matches_orcaslicer():
+    """Bambu's colour-based flush (flush.py) against OrcaSlicer 2.5.1's CLI on the P2S (nozzle volume 110)."""
+    from print3d_translator import flush as F
+    assert F.matrix(["#000000", "#FFFFFF"], 110) == [[0, 670], [190, 0]]
+    assert F.matrix(["#FFFFFF", "#1E88E5"], 110) == [[0, 315], [594, 0]]
+    assert F.matrix(["#000000", "#F99963"], 110) == [[0, 622], [222, 0]]
+    assert F.flat(F.matrix(["#7B3FA0", "#1F5FD1", "#F5D000", "#2EA043"], 110)) == \
+        "0,247,608,362,262,0,614,375,298,328,0,293,258,288,523,0".split(",")
+    assert F.volume("#00000000", "#FFFFFF", 110) == F.volume("#FFFFFF", "#FFFFFF", 110)   # transparent = white
+    assert F.minimum("#000000", "#FFFFFF", 110) == 603.0 and F.volume("#000000", "#FFFF00", 110) <= F.MAX_FLUSH

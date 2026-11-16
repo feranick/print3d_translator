@@ -1,7 +1,7 @@
 """threemf.py — reads 3MF files: plain ones (core spec + production extension components) and Bambu Studio /
 OrcaSlicer projects (Metadata/model_settings.config: object and part names, part types, filaments,
 per-object settings, plates).
-Version: 2026.11.11.1
+Version: 2026.11.16.1
 
 What is read:
   meshes          every build item, its components (parts) with their transforms, in mm ('unit' converted)
@@ -156,6 +156,29 @@ def _bed(z: zipfile.ZipFile) -> tuple[float, float] | None:
         return float(np.ptp(xy[:, 0])), float(np.ptp(xy[:, 1]))
     except (TypeError, ValueError, AttributeError):
         return None
+
+
+def project_flush(path: str | Path) -> dict | None:
+    """The project's purge settings (Bambu Studio / OrcaSlicer project_settings.config): {colors, matrix
+    (effective mm3 = flush_volumes_matrix x flush_multiplier, rows = from), multiplier} or None."""
+    import json
+    try:
+        with zipfile.ZipFile(path) as z:
+            cfg = json.loads(z.read("Metadata/project_settings.config"))
+    except (KeyError, ValueError, OSError, zipfile.BadZipFile):
+        return None
+    cols = cfg.get("filament_colour") or []
+    m = cfg.get("flush_volumes_matrix") or []
+    n = len(cols)
+    if n < 2 or len(m) < n * n:
+        return None
+    try:
+        mult = float((cfg.get("flush_multiplier") or ["1"])[0])
+        vals = [float(v) for v in m[:n * n]]
+    except (TypeError, ValueError):
+        return None
+    return {"colors": cols, "multiplier": mult,
+            "matrix": [[round(vals[i * n + j] * mult, 1) for j in range(n)] for i in range(n)]}
 
 
 def summary(path: str | Path) -> dict:

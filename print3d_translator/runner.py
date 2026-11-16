@@ -1,7 +1,7 @@
 """runner.py — one study end to end: validate, resolve profiles, load / orient / check / place the parts,
 write the flattened profiles, STLs and assemble list, run OrcaSlicer, fill in the archive's printer id,
 check everything independently, and write <name>.json (atomically).
-Version: 2026.11.14.2
+Version: 2026.11.16.1
 
 Study folder <name>/:
   profiles/          machine.json, process.json, filament_<i>.json (flattened copies; never the installed ones)
@@ -273,9 +273,14 @@ def _load_parts(o: dict, base_dir, n_fil: int, oname: str, warnings: list) -> li
                     out.append({"name": x["name"], "tri": x["tri"], "filament": f, "volume": abs(M.volume(x["tri"])),
                                 "volume_from": "mesh"})
                 continue
-            if q.get("filament") is None and not o.get("filament") and own - {None}:
-                f = own.pop() if len(own) == 1 else 1
-                q = {**q, "filament": f if f and 1 <= f <= n_fil else 1}
+        if sub and len(sub) == 1 and sub[0].get("filament") and q.get("filament") is None and not o.get("filament"):
+            # a one-part 3MF object: its own filament (mapped), unless the study gives one
+            fm = {int(a): int(b) for a, b in (q["part"].get("filament_map") or {}).items()}
+            f = fm.get(sub[0]["filament"], sub[0]["filament"])
+            if not 1 <= f <= n_fil:
+                raise ValueError(f"object {oname}: the 3MF gives it filament {f}; the study has {n_fil}: add filaments, "
+                                 f"or map it with part.filament_map {{'{sub[0]['filament']}': 1}}")
+            q = {**q, "filament": f}
         name = q.get("name") or (sub[0]["name"] if sub else None) or oname
         out.append({"name": name, "tri": lp["tri"], "filament": int(q.get("filament") or o.get("filament") or 1),
                     "volume": lp["volume"], "volume_from": lp["volume_from"]})

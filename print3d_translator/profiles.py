@@ -1,7 +1,7 @@
 """profiles.py — OrcaSlicer system profiles: find them, index them, flatten them, choose the machine,
 process and filament profiles for a study, apply the intent and overrides, and write the flattened
 copies the OrcaSlicer CLI loads.
-Version: 2026.11.14.2
+Version: 2026.11.16.1
 
 Why we flatten: OrcaSlicer 2.4.2's --load-settings / --load-filaments read one JSON file and do not
 follow "inherits" (OrcaSlicer issue #14718): every key a leaf profile does not set silently falls back
@@ -478,7 +478,7 @@ def _as_list(v) -> list:
 
 INTENT_KEYS = {"preset", "process", "layer_height", "first_layer_height", "walls", "top_layers",
                "bottom_layers", "infill", "infill_pattern", "supports", "support_angle", "brim", "seam",
-               "color_changes", "pauses"}
+               "color_changes", "pauses", "flush"}
 
 
 def apply_overrides(cfg: dict, overrides: dict, where: str, others: dict[str, dict], changes: dict) -> None:
@@ -566,11 +566,13 @@ def resolve(v: Vendor, study: dict) -> dict:
         if not cfg.get(temp_key) or cfg.get(temp_key) in (["0"], "0"):
             warnings.append(f"filament {i} ({cfg['name']}) has no {temp_key}: is the {bed_type} right for it?")
 
+    flush_info = apply_flush(process, machine, filaments, study, changes, warnings)
+
     return {"machine": machine, "process": process, "filaments": filaments,
             "names": {"machine": mname, "process": pname, "filaments": fnames},
             "model": {"name": mm["name"], "short": short, "model_id": mm.get("model_id"), "nozzle": nozzle},
             "plate": {"name": plate, "bed_type": bed_type, "temp_key": temp_key},
-            "set": changes, "warnings": warnings,
+            "set": changes, "warnings": warnings, "flush": flush_info,
             "vendor_version": v.version}
 
 
@@ -609,3 +611,74 @@ def process_keys(r: dict) -> set:
     machine or filament keys (OrcaSlicer defaults them, e.g. brim_type)."""
     others = set(r["machine"]) | {k for f in r["filaments"] for k in f}
     return set(r["process"]) | (set(orca_keys()["keys"]) - others)
+
+
+# ---------------------------------------------------------------- flush volumes
+
+def _first_float(v, default=None):
+    try:
+        return float(_as_list(v)[0])
+    except (TypeError, ValueError, IndexError):
+        return default
+
+
+def apply_flush(process: dict, machine: dict, filaments: list[dict], study: dict, changes: dict,
+                warnings: list) -> dict | None:
+    """The purge on each filament change, written explicitly (flush.py). OrcaSlicer's CLI computes Bambu's
+    colour-based matrix but multiplies it by its default flush_multiplier 0.3 (Bambu Studio: 1.0), which
+    left black -> white changes with 201 mm3 instead of 670. So, with 2+ filaments:
+      intent.flush 'auto' (default)  the colour-based matrix, multiplier 1
+      intent.flush <number>          the colour-based matrix times this multiplier (0.5-3)
+      intent.flush 'max'             every change purges the maximum (800 mm3)
+      overrides.process.flush_volumes_matrix  that matrix (mm3, rows = from), multiplier 1 unless
+                                     overrides.process.flush_multiplier is also given
+      from_3mf.flush 'keep'          the project's own matrix x its multiplier, mapped to the study's filaments
+    Both keys go into profiles.set and the settings round trip. Returns {mode, matrix (effective mm3),
+    multiplier, extra} or None for one filament."""
+    from . import flush as F
+    n = len(filaments)
+    if n < 2:
+        return None
+    intent = study.get("intent") or {}
+    ovp = (study.get("overrides") or {}).get("process") or {}
+    colors = [(_as_list(f.get("filament_colour")) or ["#FFFFFF"])[0] for f in filaments]
+    extra = _first_float(machine.get("nozzle_volume"), 0.0) or 0.0
+    auto = F.matrix(colors, extra)
+    mode = intent.get("flush", "auto")
+    src = study.get("_flush_from_3mf")
+    if "flush_volumes_matrix" in ovp:
+        m = F.unflat(_as_list(process.get("flush_volumes_matrix")), n)
+        if m is None:
+            raise ProfileError(f"overrides.process.flush_volumes_matrix: {n * n} values (rows = from, columns = to, mm3)")
+        mult = _first_float(ovp.get("flush_multiplier"), 1.0) if "flush_multiplier" in ovp else 1.0
+        if "flush" in intent:
+            warnings.append("intent.flush is ignored: overrides.process.flush_volumes_matrix is given")
+        mode = "override"
+    elif "flush_multiplier" in ovp:
+        m, mult, mode = auto, _first_float(ovp.get("flush_multiplier"), 1.0), "override_multiplier"
+    elif src and src.get("mode") == "keep" and src.get("matrix"):
+        m = [[(src["matrix"].get(f"{i + 1}>{j + 1}", auto[i][j]) if i != j else 0.0) for j in range(n)] for i in range(n)]
+        mult, mode = 1.0, "from_3mf"
+    elif mode == "auto":
+        m, mult = auto, 1.0
+    elif mode == "max":
+        m, mult = [[0.0 if i == j else F.MAX_FLUSH for j in range(n)] for i in range(n)], 1.0
+    elif isinstance(mode, (int, float)) and not isinstance(mode, bool) and 0.5 <= float(mode) <= 3:
+        m, mult = auto, float(mode)
+    else:
+        raise ProfileError(f"intent.flush {mode!r}: 'auto' (colour-based), 'max', or a multiplier 0.5-3")
+    if mode not in ("override",):
+        _set(process, "flush_volumes_matrix", F.flat(m), changes, "process")
+    if mode != "override_multiplier" or "flush_multiplier" not in ovp:
+        _set(process, "flush_multiplier", [f"{mult:g}"], changes, "process")
+    eff = [[round(v * mult, 1) for v in row] for row in m]
+    if src and src.get("matrix") and mode != "from_3mf":
+        higher = [f"{k.replace('>', '->')}: project {v:g} vs {eff[int(k.split('>')[0]) - 1][int(k.split('>')[1]) - 1]:g}"
+                  for k, v in src["matrix"].items()
+                  if int(k.split(">")[0]) <= n and int(k.split(">")[1]) <= n
+                  and v > eff[int(k.split(">")[0]) - 1][int(k.split(">")[1]) - 1] + 1]
+        if higher:
+            warnings.append(f"{src.get('path')}: the project purges more on some filament changes (mm3: "
+                            f"{'; '.join(higher[:6])}); from_3mf.flush 'keep' uses its matrix")
+    return {"mode": mode if isinstance(mode, str) else "multiplier", "matrix": eff, "multiplier": mult, "extra": extra,
+            "colors": colors}

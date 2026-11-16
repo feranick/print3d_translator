@@ -1,7 +1,7 @@
 """gcode.py — an independent, streaming reader of OrcaSlicer / Bambu Lab G-code. It does not trust the
 slicer's summary: it follows every move and returns the extrusion segments, layers, tools, objects,
 features and temperatures, which check.py compares with the study.
-Version: 2026.11.14.2
+Version: 2026.11.16.1
 
 What it understands:
 - G0/G1 and arcs G2/G3 (I/J centre offsets, Z helix, P full turns), G90/G91, M82/M83, G92, G28.
@@ -98,6 +98,7 @@ class Parsed:
     travel_bbox: dict = field(default_factory=dict)    # {region: [xmin, ymin, xmax, ymax, zmax]}
     temps: list = field(default_factory=list)          # [{line, kind, value, tool, wait, conditional, region, layer, flags}]
     tool_changes: list = field(default_factory=list)   # [{line, tool, region, layer, conditional}]
+    flushes: list = field(default_factory=list)        # [{line, layer, region, from, to, e_mm}]: one per VFLUSH block
     relative_e: bool | None = None
     routines: dict = field(default_factory=dict)       # {command: count}
     warnings: list = field(default_factory=list)
@@ -180,7 +181,7 @@ def parse(text: str, arc_step_deg: float = 10.0) -> Parsed:
     cond_moved = False
     region = 0
     pending_incoming: list[dict] = []
-    in_vflush = False
+    in_vflush, flush_e, prev_tool = False, 0.0, None
     tb = {r: [math.inf, math.inf, -math.inf, -math.inf, -math.inf] for r in REGIONS}
 
     for i, raw in enumerate(lines):
@@ -194,14 +195,18 @@ def parse(text: str, arc_step_deg: float = 10.0) -> Parsed:
         if line.startswith(";"):
             s = line[1:].strip()
             if s == "VFLUSH_START":
-                in_vflush = True
+                in_vflush, flush_e = True, 0.0
             elif s == "VFLUSH_END":
                 in_vflush = False
+                if flush_e > 0:
+                    P.flushes.append({"line": i, "layer": layer + 1, "region": REGIONS[region], "from": prev_tool,
+                                      "to": tool, "e_mm": round(flush_e, 4)})
             elif in_vflush and s.startswith("VG1"):
                 m = re.search(r"\bE(-?\d*\.?\d+)", s)
                 if m and float(m.group(1)) > 0:
                     key = tool if tool is not None else -1
                     P.e_flush[key] = P.e_flush.get(key, 0.0) + float(m.group(1))
+                    flush_e += float(m.group(1))
             if s == "CHANGE_LAYER":
                 layer += 1
                 P.layers.append({"n": layer + 1, "line": i, "z_height": None, "layer_height": None})
@@ -312,6 +317,8 @@ def parse(text: str, arc_step_deg: float = 10.0) -> Parsed:
                 P.tool_changes.append({"line": i, "tool": n, "region": REGIONS[region], "layer": layer + 1,
                                        "conditional": conditional})
                 if not conditional:
+                    if tool is not None and n != tool:
+                        prev_tool = tool
                     tool = n
                 for rec in pending_incoming:
                     rec["tool"] = n

@@ -167,6 +167,7 @@ Settings, read from the environment:
 | `unsupported_extrusion` | every extrusion of the parts rests on the layer below, or on support up to 3 layers below. "Rests" means within reach = half a line + `layer_height` / tan(`support_angle`), 0.556 mm at 0.42 / 0.2 / 30°. What a layer offers the next is its area (perimeters filled) and its support lines with their spacing filled. An unsupported stretch held at both ends and about straight is a bridge and passes. Fails when more than 5 mm of extrusion lies more than 1 mm beyond reach; says where (z, xy, object), whether it starts in mid-air, and the fix. | hard |
 | `long_bridges` | bridges up to 15 mm (longer ones sag) | soft |
 | `travel`, `wrapping_area`, `estimates` | travel stays on the bed; nothing in the wrapping-detection zone; OrcaSlicer's filament totals equal ours (0.5% length, 2% weight). Ours include the firmware flushes on filament changes, which the G-code carries only as `;VG1 E…` comments in `VFLUSH` blocks. | soft |
+| `flush_adequacy` | (2+ filaments) every filament change of the print purges at least 0.9 × Bambu's colour-based volume for its two colours (black → white: 603 of 670 mm³), measured from the change's `VFLUSH` block. `got.transitions`: from, to, colours, changes, purge per change, minimum. Below: a warning; below half of the minimum: hard (the new colour comes out mixed with the old). Acceptable with `accept`. | soft / hard |
 | `bed_vs_filaments` | the hottest bed of the print is not more than 10 °C above a used filament's own bed temperature. PLA + PETG on one plate gets a 70 °C bed on some or all layers. | soft |
 | `pauses` | (with `intent.pauses`) each pause once, before the first extrusion of the first layer above its height, followed by the machine's pause G-code. It is read from the final file, so the file checked is the file printed | hard |
 | `top_slivers` | parts whose top is too thin to print (see `layers`): trim them, or accept them | soft |
@@ -248,6 +249,18 @@ python -m print3d_translator.cli bench
 ```
 
 Then pin it: `PINNED` in `orca.py`, and copy `data/orca_keys-X.Y.Z.json` to `data/orca_keys.json`. `p3dt status` and every run warn when the JSON profiles' vendor version differs from the installed OrcaSlicer's. The version is re-read when the OrcaSlicer executable changes, so a running MCP server notices an update.
+
+## Flush volumes (filament changes)
+
+On every filament change the P2S purges the old filament through the nozzle (firmware flush, carried in the G-code as `;VG1 E…` in `VFLUSH` blocks). How much it purges comes from `flush_volumes_matrix` × `flush_multiplier`.
+
+- **OrcaSlicer's default under-purges.** Its CLI (and GUI) compute Bambu's colour-based matrix (black → white 670 mm³, white → black 190 mm³), then multiply it by OrcaSlicer's default `flush_multiplier` 0.3. Bambu Studio uses 1.0. The CAT keychain (black + white PLA Matte) purged 201 mm³ per black → white change and the white came out grey.
+- **The translator writes both** (`flush.py`, `profiles.apply_flush`): the matrix computed from the filaments' colours with Bambu's model (it matches OrcaSlicer 2.5.1's numbers), and a multiplier of 1. Both appear in `profiles.set` and are checked by `settings_roundtrip`.
+- **`intent.flush`:** `"auto"` (default), a multiplier 0.5–3, or `"max"` (800 mm³ every change). A matrix of your own: `overrides.process.flush_volumes_matrix` (n × n mm³, rows = from), used as given (multiplier 1 unless `flush_multiplier` is also overridden).
+- **Bambu Studio projects:** `from_3mf.flush: "keep"` uses the project's matrix × multiplier, mapped to the study's filaments; by default (`"auto"`) a warning lists the changes where the project purges more.
+- **Results:** `estimate.tool_changes` {total, by_transition} next to `flush_m`; `checks.flush_adequacy` per transition.
+
+This makes p3dt's files purge like Bambu Studio's, more than OrcaSlicer's GUI exports (whose project settings keep 0.3): a GUI comparison now shows `flush_volumes_matrix` / `flush_multiplier` as differences, on purpose.
 
 ## Placement
 
@@ -379,6 +392,7 @@ OrcaSlicer's profiles are AGPL-3.0, so they are read from the installed OrcaSlic
 
 | Version | Changes |
 |---|---|
+| 2026.11.16.1 | **Flush volumes** (from a contaminated print: black → white purged 201 mm³ instead of 670). The colour-based matrix is written with `flush_multiplier` 1 (OrcaSlicer's default 0.3 under-purges); `intent.flush` (`auto`, a multiplier, `max`); `from_3mf.flush` (`keep`, or a warning when the project purges more); new check `flush_adequacy` per transition (soft; hard below half the minimum; acceptable); `estimate.tool_changes`. Fixed: a one-part object from a 3MF lost its filament (it took filament 1). |
 | 2026.11.14.3 | First P2S multi-filament comparison with OrcaSlicer 2.5.1's GUI (cabin C2, two PLA colours): 69 same, 4 close (time 5 s, volumes 0.2 mm³), 1 difference: the CLI writes `filament_maps` "1" for two filaments, the GUI "1 1". `finalize()` now writes one value per filament in `slice_info`, `model_settings` and `project_settings`, as the GUI does. `tools` with `color_changes`: a layer takes the new filament when its middle is above the change's z, as OrcaSlicer assigns height ranges (a change at exactly a layer top was reported as wrong filament). |
 | 2026.11.14.2 | **H2D support removed** (only the P2S can be tested here). A multi-extruder printer is refused with a clear message; `filaments[].extruder`, the filament → extruder map, per-extruder areas (placement and `bounds`), `shared_nozzle`, the `filament_map` archive check and the per-extruder `nozzle_volume_type` are gone. The last version with H2D is the git tag `h2d-last` (branch `h2d`); `docs/H2D.md` lists what was removed and what was learned. Benchmark `h2d_two_filaments` → `p2s_two_filaments`. `tools/compare_bambu.py`: multi-filament comparison (filament maps, layer filament lists, tool changes, flushes, prime tower, grams, settings) with a verdict per row, and an HTML report. |
 | 2026.11.14.1 | Pinned to OrcaSlicer 2.5.1 (Bambu vendor profiles unchanged: 02.08.00.16). The OrcaSlicer version is cached per executable and its modification time, so a running MCP server sees an update. One version-independent profile checkout (`~/Software/orcaslicer-src`, switched by tag); update procedure in "OrcaSlicer versions". |

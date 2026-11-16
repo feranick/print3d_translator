@@ -1,5 +1,5 @@
 """format.py — the study format (study_format) and static validation (validate): no slicing.
-Version: 2026.11.14.2
+Version: 2026.11.16.1
 
 A study is one plate: a Bambu Lab printer, its filaments, the objects on the plate and the intent.
 Validation checks keys, types, files and (when OrcaSlicer's profiles are found) resolves the
@@ -16,11 +16,11 @@ from . import profiles as P
 STUDY_KEYS = {"printer", "filaments", "objects", "intent", "overrides", "allow_mix_temp", "expect", "run",
               "description", "view", "layout", "accept"}
 OBJECT_KEYS = {"name", "part", "parts", "filament", "orient", "copies", "at", "settings", "from_3mf"}
-FROM_3MF_KEYS = {"path", "plate", "objects", "filament_map", "layout", "settings"}
+FROM_3MF_KEYS = {"path", "plate", "objects", "filament_map", "layout", "settings", "flush"}
 LAYOUT_KEYS = {"overlap", "gap", "brims_may_overlap"}
 ACCEPT_KEYS = {"check", "object", "z_range", "reason"}
 ACCEPTABLE = {"unsupported_extrusion", "long_bridges", "extrusion_volume", "layers", "footprint", "bed_vs_filaments",
-              "estimates", "thin_walls", "bed_contact", "unsupported_regions", "closed_mesh"}
+              "estimates", "flush_adequacy", "thin_walls", "bed_contact", "unsupported_regions", "closed_mesh"}
 PART_KEYS = {"name", "part", "filament"}
 PART_FORMS = ("step", "stl", "3mf", "goal", "b3dt")
 NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$")
@@ -74,7 +74,9 @@ def study_format(status: dict | None = None) -> dict:
                    "filament profiles (the study's apply).",
             "from_3mf": "{path, plate: n (only that plate), objects: [names or 'o<id>'], filament_map: {'2': 1} "
                         "(3MF filament -> study filament), layout: 'keep' (default: the plate positions) | 'auto', "
-                        "settings: 'keep' (default: per-object settings that OrcaSlicer knows) | 'drop'}",
+                        "settings: 'keep' (default: per-object settings that OrcaSlicer knows) | 'drop', flush: 'auto' "
+                        "(default: colour-based; a warning when the project purges more) | 'keep' (the project's "
+                        "flush_volumes_matrix x flush_multiplier)}",
             "layout": "{overlap: 'footprint' (default: silhouettes may not overlap) | 'first_layer' (first-layer outlines "
                       "may not overlap; parts may interleave above the bed and a 3D check keeps them apart), gap: mm "
                       "between parts (6), brims_may_overlap: false}. Each part keeps outline + gap/2 + its brim (+3 mm "
@@ -93,7 +95,12 @@ def study_format(status: dict | None = None) -> dict:
                        "color_changes": "[{z, filament}]: from height z (mm) up (the layers whose middle is above z), every object prints with that filament "
                                         "(an AMS filament change; as OrcaSlicer height-range modifiers)",
                        "pauses": "[{z, note}]: pause the printer before the layer at height z (the machine's pause "
-                                 "G-code, e.g. M400 U1), e.g. to insert magnets or change filament by hand"},
+                                 "G-code, e.g. M400 U1), e.g. to insert magnets or change filament by hand",
+                       "flush": "purge on each filament change: 'auto' (default: from the two filaments' colours, Bambu "
+                                "Studio's model, e.g. black -> white 670 mm3, white -> black 190 mm3) | <multiplier 0.5-3> "
+                                "| 'max' (800 mm3 every change). Written as flush_volumes_matrix + flush_multiplier 1 "
+                                "(OrcaSlicer's own default multiplier 0.3 under-purges dark -> light). A matrix of your "
+                                "own: overrides.process.flush_volumes_matrix [n x n mm3, rows = from]"},
             "overrides": "{process: {key: value}, machine: {...}, filament: {'all' | '1' | '2': {...}}}: raw "
                          "OrcaSlicer keys (validated against OrcaSlicer's own keys)",
             "allow_mix_temp": "true: allow filaments with different temperatures on one nozzle (one bed temperature)",
@@ -104,10 +111,13 @@ def study_format(status: dict | None = None) -> dict:
         "results": {
             "reliable": "false when a hard check failed (unreliable_because says which)",
             "files": "gcode_3mf (the file to print), gcode, profiles (the flattened settings), log",
-            "estimate": "time_s, time, filament_g, filament_m, by_filament (OrcaSlicer's, checked against ours)",
+            "estimate": "time_s, time, filament_g, filament_m, flush_m, by_filament (OrcaSlicer's, checked against "
+                        "ours), tool_changes {total, by_transition: {'1->2': n}}",
             "objects": "per object: volume_mm3 (exact for STEP/b3dt), orientation, center, checks before slicing",
             "checks": "archive, md5, printer_model_id, settings_roundtrip, bounds, layers, first_layer, tools, "
-                      "temperatures, extrusion_volume, footprint, ... each {passed, hard, why, got, expected}",
+                      "temperatures, extrusion_volume, footprint, flush_adequacy (each filament change purges enough "
+                      "for its two colours; got.transitions: from, to, changes, purge_mm3, minimum_mm3), ... each "
+                      "{passed, hard, why, got, expected}",
             "profiles": "machine, process, filaments, set (every value changed: [old, new]), sha256"},
         "presets": {k: v["words"] for k, v in P.PRESETS.items()},
         "example": EXAMPLE,
@@ -141,7 +151,7 @@ def expand(study: dict, base_dir=None) -> tuple[dict, list[str]]:
     objs = study.get("objects")
     if not isinstance(objs, list) or not any(isinstance(o, dict) and "from_3mf" in o for o in objs):
         return study, []
-    out, notes = [], []
+    out, notes, flush_src = [], [], None
     for k, o in enumerate(objs):
         if not (isinstance(o, dict) and "from_3mf" in o):
             out.append(o)
@@ -170,6 +180,21 @@ def expand(study: dict, base_dir=None) -> tuple[dict, list[str]]:
             raise ValueError(f"{where}: {e}") from e
         if r["ignored"]:
             notes.append(f"{path.name}: not read: {', '.join(r['ignored'])}")
+        fmode = spec.get("flush", "auto")
+        if fmode not in ("auto", "keep"):
+            raise ValueError(f"{where}.flush: 'auto' (colour-based; warns when the project purges more) or 'keep' "
+                             f"(the project's flush_volumes_matrix x flush_multiplier)")
+        pf = threemf.project_flush(path)
+        if pf and flush_src is None:
+            to_study = lambda f: int(fmap.get(str(f), f))
+            mm = {}
+            for i, row in enumerate(pf["matrix"]):
+                for j, v in enumerate(row):
+                    a, b = to_study(i + 1), to_study(j + 1)
+                    if a != b:
+                        key = f"{a}>{b}"
+                        mm[key] = max(mm.get(key, 0.0), v)
+            flush_src = {"path": path.name, "mode": fmode, "matrix": mm, "multiplier": pf["multiplier"]}
         multi_plate = len(r["plates"]) > 1
         if multi_plate and spec.get("plate") is None:
             notes.append(f"{path.name} has {len(r['plates'])} plates; without 'plate' all objects go on one plate")
@@ -192,6 +217,8 @@ def expand(study: dict, base_dir=None) -> tuple[dict, list[str]]:
             out.append(e)
     st = copy.copy(study)
     st["objects"] = out
+    if flush_src:
+        st["_flush_from_3mf"] = flush_src
     return st, notes
 
 
@@ -258,7 +285,7 @@ def validate_study(st, base_dir: str | Path | None = None, vendor: P.Vendor | No
         warnings += notes
     except ValueError as e:
         return {"ok": False, "errors": [str(e)], "warnings": warnings, "estimate": None}
-    unknown = set(st) - STUDY_KEYS
+    unknown = {k for k in set(st) - STUDY_KEYS if not str(k).startswith("_")}
     if unknown:
         errors.append(f"unknown keys {sorted(unknown)}; a study has {sorted(STUDY_KEYS)}")
     pr = st.get("printer")
