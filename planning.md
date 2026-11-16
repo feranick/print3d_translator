@@ -135,8 +135,18 @@ OrcaSlicer versions are in the README; this file keeps decisions, setup, lessons
   forced [0,140,140,0] unreliable (flush_adequacy hard); orange reliable. Also fixed: one-part 3MF objects lost
   their filament.
 
+- **2026.11.16.2:** colour-painted 3MF objects (panda clicker): paint decoded (66,968 triangles; states 0/2/3
+  as the user counted), `from_3mf.paint` keep/drop, the plate sliced from a trimmed copy of the 3MF. OrcaSlicer
+  quirks found on the way: projects from Bambu Studio 02.06 need `--allow-newer-file` (-24 otherwise); without
+  project settings the CLI assumes a 200 x 200 bed and shifts everything 28 mm; filaments sharing a preset name
+  count as one and the prime tower is turned off unless `--filament-colour` is given; with colours given it
+  recomputes the flush matrix (Bambu's measured table: orange -> black 166 vs our formula's 215). Panda on the
+  Mac: reliable, 82 changes 2<->3, paint_applied and flush_adequacy pass. Basket (unpainted): unchanged path.
+
 ## Open
 
+- **After restarting Claude:** check paint 'drop' and a remapping filament_map on the real panda through MCP
+  (the running server still validates with 2026.11.16.1, which does not know from_3mf.paint).
 - **A real print** of the tree-support cradle; preview and skip-object on the printer still to be checked.
 - **ACTION (user, when the printer is free): print the two-colour test tile** on the P2S:
   `~/p3dt_runs/run_20261114_190244_65a951/two_colour_tile/two_colour_tile.gcode.3mf` (30 × 30 × 4 mm, white

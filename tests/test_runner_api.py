@@ -285,7 +285,9 @@ def bambu_3mf(path, objects, plates=None, project=None):
             sub.append(f'<object id="{p["id"]}" type="model"><mesh><vertices>'
                        + "".join(f'<vertex x="{x:.4f}" y="{y:.4f}" z="{z:.4f}"/>' for x, y, z in v)
                        + "</vertices><triangles>"
-                       + "".join(f'<triangle v1="{3 * i}" v2="{3 * i + 1}" v3="{3 * i + 2}"/>' for i in range(len(t)))
+                       + "".join(f'<triangle v1="{3 * i}" v2="{3 * i + 1}" v3="{3 * i + 2}"'
+                                 + (f' paint_color="{p["paint"]}"' if p.get("paint") and i % 2 == 0 else "") + "/>"
+                                 for i in range(len(t)))
                        + "</triangles></mesh></object>")
             comps.append(f'<component p:path="/3D/Objects/o.model" objectid="{p["id"]}" transform="1 0 0 0 1 0 0 0 1 0 0 0"/>')
             ms.append(f'<part id="{p["id"]}" subtype="{p.get("subtype", "normal_part")}"><metadata key="name" value="{o["name"]}_{p["id"]}"/>'
@@ -578,3 +580,85 @@ def test_from_3mf_flush_keep_and_warning(fake):
     assert keep["ok"], keep.get("why")
     assert keep["objects"]["Top_2"]["filament"] == 2         # a one-part 3MF object keeps its filament
     assert keep["checks"]["flush_adequacy"]["passed"]
+
+
+# ------------------------------------------------------------- 2026.11.16.2: colour-painted 3MF objects
+
+def painted_3mf(tmp, paint="8", plates=None, extra=None):
+    """One 30 x 30 x 6 object on filament 1 whose every other triangle is painted (code '8' = filament 2)."""
+    objs = [{"id": 2, "name": "Panda Top", "at": (128, 128), "extruder": 1,
+             "parts": [{"id": 1, "box": (30, 30, 6), "paint": paint}]}] + (extra or [])
+    return bambu_3mf(tmp / "panda.3mf", objs, plates=plates)
+
+
+def fils(n):
+    cols = ["#F7E6DE", "#000000", "#FF6A13"]
+    return [{"profile": "Bambu PLA Basic", "color": cols[i]} for i in range(n)]
+
+
+def test_paint_codes_decode_and_remap():
+    from print3d_translator import threemf as T3
+    code = "880003008038088330003"                       # a real triangle of the panda
+    leaves = T3.paint_leaves(code)
+    assert set(leaves) <= {0, 2, 3} and len(leaves) > 4
+    assert T3.paint_remap(code, {}) == code                 # identity: unchanged
+    back = T3.paint_remap(T3.paint_remap(code, {2: 1, 3: 4}), {1: 2, 4: 3})
+    assert back == code and sorted(T3.paint_leaves(T3.paint_remap(code, {3: 5}))) == sorted(5 if x == 3 else x for x in leaves)
+    st = T3.paint_stats(b'<triangle v1="0" v2="1" v3="2" paint_color="8"/><triangle paint_supports="4"/>')
+    assert st["color"] == 1 and st["supports"] == 1 and st["states"] == {2: 1}
+
+
+def test_paint_keep_slices_the_project(fake):
+    p = painted_3mf(fake)
+    res = R.run_study("pk", p2s(fake, filaments=fils(2), objects=[{"from_3mf": {"path": str(p)}}]), fake / "pk")
+    assert res["ok"] and res["reliable"], (res.get("why"), res.get("unreliable_because"))
+    assert (fake / "pk" / "model.3mf").exists() and not (fake / "pk" / "assemble.json").exists()
+    cmd = json.loads((fake / "pk" / "slice" / "command.json").read_text())
+    assert cmd[-1].endswith("model.3mf") and "--allow-newer-file" in cmd and "--filament-colour" in cmd
+    pa = res["checks"]["paint_applied"]
+    assert pa["passed"] and pa["got"]["objects"][0]["filaments"] == [2]
+    assert res["estimate"]["tool_changes"]["by_transition"].get("1->2", 0) >= 1
+    assert res["placement"]["tower"]
+
+
+def test_paint_drop_warns_and_is_unreliable(fake):
+    p = painted_3mf(fake)
+    st = p2s(fake, filaments=fils(2), objects=[{"from_3mf": {"path": str(p), "paint": "drop"}}])
+    res = R.run_study("pd", st, fake / "pd")
+    assert any("'Panda Top' has 6 colour-painted triangles" in w for w in res["warnings"])
+    assert not res["reliable"] and not res["checks"]["paint_applied"]["passed"]
+    assert res["estimate"]["tool_changes"]["total"] == 0
+    ok = R.run_study("pda", {**st, "accept": [{"check": "paint_applied", "reason": "one colour on purpose"}]}, fake / "pda")
+    assert ok["reliable"]
+
+
+def test_paint_remapped_with_filament_map(fake):
+    p = painted_3mf(fake)
+    st = p2s(fake, filaments=fils(3), objects=[{"from_3mf": {"path": str(p), "filament_map": {"2": 3}}}])
+    res = R.run_study("pm", st, fake / "pm")
+    assert res["reliable"], res.get("unreliable_because")
+    assert res["checks"]["paint_applied"]["got"]["objects"][0]["filaments"] == [3]
+    assert "1->3" in res["estimate"]["tool_changes"]["by_transition"]
+    tr = json.loads((fake / "pm" / "model_3mf.json").read_text())
+    assert tr["remapped_paint"] == 6
+
+
+def test_paint_keep_refusals(fake):
+    p = painted_3mf(fake)
+    v = api.validate({"x": p2s(fake, filaments=fils(2), objects=[{"from_3mf": {"path": str(p)}, "at": [50, 50]}])})["x"]
+    assert not v["ok"] and "layout 'auto'" in v["errors"][0] and "paint 'drop'" in v["errors"][0]
+    v = api.validate({"x": p2s(fake, filaments=fils(2), objects=[{"from_3mf": {"path": str(p), "layout": "auto"}}])})["x"]
+    assert not v["ok"] and "sliced as laid out" in v["errors"][0]
+    v = api.validate({"x": p2s(fake, filaments=fils(2), objects=[{"from_3mf": {"path": str(p)}},
+                                                                  {"name": "cube", "part": {"stl": str(fake / "cube.stl")}}])})["x"]
+    assert not v["ok"] and "no other objects" in v["errors"][0]
+    v = api.validate({"x": p2s(fake, filaments=fils(1), objects=[{"from_3mf": {"path": str(p)}}])})["x"]
+    res = R.run_study("pf", p2s(fake, filaments=fils(1), objects=[{"from_3mf": {"path": str(p)}}]), fake / "pf")
+    assert not res["ok"] and "paint uses filament(s) [2]" in res["why"]
+
+
+def test_unpainted_3mf_unchanged(fake):
+    p = bambu_3mf(fake / "plain.3mf", [{"id": 2, "name": "Basket", "at": (128, 128), "extruder": 1,
+                                        "parts": [{"id": 1, "box": (30, 30, 6)}]}])
+    res = R.run_study("pu", p2s(fake, objects=[{"from_3mf": {"path": str(p)}}]), fake / "pu")
+    assert res["reliable"] and "paint_applied" not in res["checks"] and (fake / "pu" / "assemble.json").exists()

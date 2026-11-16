@@ -1,6 +1,6 @@
 """orca.py — the OrcaSlicer command line: find it, tell its version, build the command, run it in its
 own process group with a timeout and a cancel flag, and decode its exit status.
-Version: 2026.11.14.2
+Version: 2026.11.16.2
 
 The translator never asks OrcaSlicer to do anything but slice files: no printer, network or cloud
 options are ever passed. Geometry comes in through an assemble list (--load-assemble-list): one STL
@@ -166,13 +166,14 @@ def conflicts(log_text: str) -> list[tuple[str, str]]:
 
 def command(exe: str, folder: Path, machine: str, process: str, filaments: list[str], assemble: str,
             bed_type: str, out_name: str = "plate.gcode.3mf",
-            min_save: bool = False, debug: int = 3) -> list[str]:
+            min_save: bool = False, debug: int = 3, colours: list[str] | None = None) -> list[str]:
     """The argument list. Boolean flags take no value (a value after them would be read as an input
     file); --export-3mf takes a name relative to --outputdir."""
+    model = str(assemble).lower().endswith(".3mf")     # a project sliced as it is (painted 3MF), else the assemble list
     argv = [exe,
             "--load-settings", f"{machine};{process}",
             "--load-filaments", ";".join(filaments),
-            "--load-assemble-list", assemble,
+            *([] if model else ["--load-assemble-list", assemble]),
             "--curr-bed-type", bed_type,
             "--slice", "0",
             "--outputdir", str(folder),
@@ -181,6 +182,15 @@ def command(exe: str, folder: Path, machine: str, process: str, filaments: list[
             "--logfile", str(Path(folder) / "orca.log")]
     if min_save:
         argv.append("--min-save")
+    if model:
+        # a project saved by a newer Bambu Studio (e.g. 02.06) is refused (-24) unless allowed; the settings come
+        # from the study's profiles anyway, and the result is checked like any other
+        argv += ["--allow-newer-file"]
+        if colours:
+            # filaments with one preset name count as one when a project is loaded, and the CLI then turns the prime
+            # tower off ("disable prime tower for only one filament"); explicit colours keep them apart
+            argv += ["--filament-colour", ";".join(colours)]
+        argv.append(str(assemble))
     return argv
 
 

@@ -1,5 +1,5 @@
 """format.py — the study format (study_format) and static validation (validate): no slicing.
-Version: 2026.11.16.1
+Version: 2026.11.16.2
 
 A study is one plate: a Bambu Lab printer, its filaments, the objects on the plate and the intent.
 Validation checks keys, types, files and (when OrcaSlicer's profiles are found) resolves the
@@ -16,11 +16,11 @@ from . import profiles as P
 STUDY_KEYS = {"printer", "filaments", "objects", "intent", "overrides", "allow_mix_temp", "expect", "run",
               "description", "view", "layout", "accept"}
 OBJECT_KEYS = {"name", "part", "parts", "filament", "orient", "copies", "at", "settings", "from_3mf"}
-FROM_3MF_KEYS = {"path", "plate", "objects", "filament_map", "layout", "settings", "flush"}
+FROM_3MF_KEYS = {"path", "plate", "objects", "filament_map", "layout", "settings", "flush", "paint"}
 LAYOUT_KEYS = {"overlap", "gap", "brims_may_overlap"}
 ACCEPT_KEYS = {"check", "object", "z_range", "reason"}
 ACCEPTABLE = {"unsupported_extrusion", "long_bridges", "extrusion_volume", "layers", "footprint", "bed_vs_filaments",
-              "estimates", "flush_adequacy", "thin_walls", "bed_contact", "unsupported_regions", "closed_mesh"}
+              "estimates", "flush_adequacy", "paint_applied", "thin_walls", "bed_contact", "unsupported_regions", "closed_mesh"}
 PART_KEYS = {"name", "part", "filament"}
 PART_FORMS = ("step", "stl", "3mf", "goal", "b3dt")
 NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$")
@@ -69,14 +69,18 @@ def study_format(status: dict | None = None) -> dict:
                    "OrcaSlicer project metadata (Metadata/model_settings.config): object and part names, part types "
                    "(only normal parts are solids; modifiers, negative parts and support enforcers / blockers are "
                    "left out), each part's filament ('extruder'; kept when the parts differ, else 'filament' applies), "
-                   "per-object settings, plates. Ignored (listed in warnings): variable layer height, height-range "
-                   "modifiers, painted supports / seams / colours, per-part settings, the project's process and "
-                   "filament profiles (the study's apply).",
+                   "per-object settings, plates, colour paint (see from_3mf.paint). Ignored (listed in warnings): variable "
+                   "layer height, height-range modifiers, per-part settings, the project's process and filament "
+                   "profiles (the study's apply).",
             "from_3mf": "{path, plate: n (only that plate), objects: [names or 'o<id>'], filament_map: {'2': 1} "
                         "(3MF filament -> study filament), layout: 'keep' (default: the plate positions) | 'auto', "
                         "settings: 'keep' (default: per-object settings that OrcaSlicer knows) | 'drop', flush: 'auto' "
                         "(default: colour-based; a warning when the project purges more) | 'keep' (the project's "
-                        "flush_volumes_matrix x flush_multiplier)}",
+                        "flush_volumes_matrix x flush_multiplier), paint: 'auto' (default: 'keep' when an object is "
+                        "colour-painted) | 'keep' (OrcaSlicer slices a trimmed copy of the 3MF itself, so the paint "
+                        "prints: positions as in the 3MF, no other objects on the plate, no color_changes; "
+                        "filament_map renames the paint's filaments too) | 'drop' (one colour per part; the result is "
+                        "unreliable unless accept lists paint_applied)}",
             "layout": "{overlap: 'footprint' (default: silhouettes may not overlap) | 'first_layer' (first-layer outlines "
                       "may not overlap; parts may interleave above the bed and a 3D check keeps them apart), gap: mm "
                       "between parts (6), brims_may_overlap: false}. Each part keeps outline + gap/2 + its brim (+3 mm "
@@ -114,7 +118,7 @@ def study_format(status: dict | None = None) -> dict:
             "estimate": "time_s, time, filament_g, filament_m, flush_m, by_filament (OrcaSlicer's, checked against "
                         "ours), tool_changes {total, by_transition: {'1->2': n}}",
             "objects": "per object: volume_mm3 (exact for STEP/b3dt), orientation, center, checks before slicing",
-            "checks": "archive, md5, printer_model_id, settings_roundtrip, bounds, layers, first_layer, tools, "
+            "checks": "archive, md5, printer_model_id, settings_roundtrip, bounds, layers, first_layer, tools, paint_applied, "
                       "temperatures, extrusion_volume, footprint, flush_adequacy (each filament change purges enough "
                       "for its two colours; got.transitions: from, to, changes, purge_mm3, minimum_mm3), ... each "
                       "{passed, hard, why, got, expected}",
@@ -151,7 +155,7 @@ def expand(study: dict, base_dir=None) -> tuple[dict, list[str]]:
     objs = study.get("objects")
     if not isinstance(objs, list) or not any(isinstance(o, dict) and "from_3mf" in o for o in objs):
         return study, []
-    out, notes, flush_src = [], [], None
+    out, notes, flush_src, paint_src = [], [], None, None
     for k, o in enumerate(objs):
         if not (isinstance(o, dict) and "from_3mf" in o):
             out.append(o)
@@ -161,6 +165,11 @@ def expand(study: dict, base_dir=None) -> tuple[dict, list[str]]:
         if not isinstance(spec, dict) or not spec.get("path"):
             raise ValueError(f"{where}: {{path, plate, objects, filament_map, layout, settings}}")
         bad = (set(spec) - FROM_3MF_KEYS) | (set(o) - {"from_3mf"})
+        if bad & {"orient", "at", "copies"}:
+            raise ValueError(f"{where}: {sorted(bad & {'orient', 'at', 'copies'})} cannot go with from_3mf: its objects keep "
+                             f"the 3MF's orientation and plate positions, and a colour-painted object is sliced from the "
+                             f"3MF as laid out (paint 'keep'). To let the translator place them: layout 'auto' (and, "
+                             f"for painted objects, paint 'drop', which prints them in one colour)")
         if bad:
             raise ValueError(f"{where}: unknown keys {sorted(bad)}; known {sorted(FROM_3MF_KEYS)} (and nothing beside from_3mf)")
         path = Path(str(spec["path"])).expanduser()
@@ -180,6 +189,33 @@ def expand(study: dict, base_dir=None) -> tuple[dict, list[str]]:
             raise ValueError(f"{where}: {e}") from e
         if r["ignored"]:
             notes.append(f"{path.name}: not read: {', '.join(r['ignored'])}")
+        paint = spec.get("paint", "auto")
+        if paint not in ("auto", "keep", "drop"):
+            raise ValueError(f"{where}.paint: 'auto' (keep the colour paint when there is some), 'keep' (slice the 3MF "
+                             f"itself, paint included) or 'drop' (one colour per part)")
+        painted = {ob["id"]: ob["paint"] for ob in r["objects"] if (ob.get("paint") or {}).get("color")}
+        mode = "keep" if paint == "keep" or (paint == "auto" and painted) else "drop"
+        if mode == "keep":
+            if layout == "auto":
+                raise ValueError(f"{where}: layout 'auto' with paint '{paint}': a painted 3MF is sliced as laid out. "
+                                 f"Use layout 'keep' (the default), or paint 'drop' to place it (one colour per part)")
+            if paint_src is not None or any("from_3mf" not in x for x in objs if isinstance(x, dict)):
+                raise ValueError(f"{where}: with paint 'keep' the plate is sliced from this 3MF itself, so the study can "
+                                 f"have no other objects or from_3mf entries; use paint 'drop' to combine them")
+            if (study.get("intent") or {}).get("color_changes"):
+                raise ValueError(f"{where}: intent.color_changes cannot be combined with paint 'keep' (the paint "
+                                 f"chooses the filaments); use paint 'drop' for colour changes by height")
+        for oid, pt in painted.items():
+            if mode == "drop":
+                nm = next(ob["name"] for ob in r["objects"] if ob["id"] == oid)
+                notes.append(f"{path.name}: object '{nm}' has {pt['color']} colour-painted triangles; paint 'drop' "
+                             f"prints it in one colour, and the result is unreliable unless accept lists paint_applied")
+        for ob in r["objects"]:
+            pt = ob.get("paint") or {}
+            if mode == "drop" and (pt.get("supports") or pt.get("seam")):
+                notes.append(f"{path.name}: object '{ob['name']}': painted "
+                             + " and ".join(f"{k} ({pt[k]} triangles)" for k in ("supports", "seam") if pt.get(k))
+                             + " not used (paint 'keep' would)")
         fmode = spec.get("flush", "auto")
         if fmode not in ("auto", "keep"):
             raise ValueError(f"{where}.flush: 'auto' (colour-based; warns when the project purges more) or 'keep' "
@@ -214,11 +250,24 @@ def expand(study: dict, base_dir=None) -> tuple[dict, list[str]]:
                 e["settings"] = dict(ob["settings"])
                 e["_settings_from_3mf"] = True
             e["_from_3mf"] = {"name": ob["name"], "id": ob["id"], "plate": ob["plate"]}
+            pt = ob.get("paint") or {}
+            states = [st for st, n in (pt.get("states") or {}).items() if st > 0 and n]
+            if pt.get("color") or pt.get("supports") or pt.get("seam"):
+                e["_paint"] = {"mode": mode, "triangles": pt.get("color", 0), "supports": pt.get("supports", 0),
+                               "seam": pt.get("seam", 0), "name": ob["name"],
+                               "filaments": sorted({int(fmap.get(str(st), st)) for st in states})}
             out.append(e)
+        if mode == "keep":
+            paint_src = {"path": str(path), "plate": spec.get("plate"), "fmap": {str(a): int(b) for a, b in fmap.items()},
+                         "settings": spec.get("settings", "keep"),
+                         "select": [[ob["id"], ob["instance"]] for ob in r["objects"]
+                                    if any(q["subtype"] == threemf.SOLID for q in ob["parts"])]}
     st = copy.copy(study)
     st["objects"] = out
     if flush_src:
         st["_flush_from_3mf"] = flush_src
+    if paint_src:
+        st["_paint_3mf"] = paint_src
     return st, notes
 
 
@@ -317,7 +366,7 @@ def validate_study(st, base_dir: str | Path | None = None, vendor: P.Vendor | No
         if not isinstance(o, dict):
             errors.append(f"{where}: an object")
             continue
-        bad = set(o) - OBJECT_KEYS - {"_from_3mf", "_settings_from_3mf"}
+        bad = set(o) - OBJECT_KEYS - {"_from_3mf", "_settings_from_3mf", "_paint"}
         if bad:
             errors.append(f"{where}: unknown keys {sorted(bad)}; known {sorted(OBJECT_KEYS)}")
         if not NAME.match(names[k]):

@@ -288,10 +288,22 @@ The outline grows by `gap / 2` (default gap 6 mm) plus the object's brim width (
 - **Ignored (listed in the warnings):**
   - variable layer height (`layer_heights_profile.txt`);
   - height-range modifiers (`layer_config_ranges.xml`);
-  - painted supports, seams and colours;
   - per-part settings;
   - the project's printer, process and filament profiles (the study's apply).
 - **Speed:** meshes are parsed with regular expressions, about 1 s per plate for the 24 MB A350 project (3.5 s for all of it).
+
+### Colour-painted objects (`from_3mf.paint`)
+
+Painted colours (`paint_color` per triangle, Bambu Studio's MMU painting) are not geometry: they only reach the slicer inside the 3MF. `threemf.py` reads them (PrusaSlicer's TriangleSelector strings: hex digits from the end, a 4-bit node each) and counts the painted triangles and the filaments they use.
+
+- **`paint: "keep"`** (what `"auto"`, the default, does when an object is painted): OrcaSlicer slices a trimmed copy of the 3MF (`model.3mf` in the study folder) instead of the assemble list: only the chosen plate's objects, moved to plate 1, renamed to the study's object names, with a minimal project settings file (the bed size, otherwise OrcaSlicer assumes 200 × 200 mm and moves everything by 28 mm; the filament list). The CLI gets `--allow-newer-file` (projects from newer Bambu Studio versions) and `--filament-colour` (filaments with the same preset name otherwise count as one, and the CLI turns the prime tower off). A non-identity `filament_map` renames the paint's filaments too (the strings are re-encoded).
+  - Positions stay as in the 3MF; `at`, `orient`, `layout: "auto"`, other objects on the plate and `intent.color_changes` are refused with the fix in the message.
+  - OrcaSlicer recomputes the flush matrix from the colours when it gets them on the command line, with Bambu's measured table for Bambu's own colours (orange → black 166 mm³, the formula gives 215). Its numbers are accepted by `settings_roundtrip` and used as the reference by `flush_adequacy`.
+  - New check **`paint_applied`** (hard): every filament the paint uses is printed within that object.
+- **`paint: "drop"`**: the earlier behaviour, one colour per part; a warning names the object and its painted triangles, and `paint_applied` fails (accept it to print in one colour on purpose).
+- Painted supports and seams pass through with `keep`; with `drop` they are listed in the warnings.
+
+Checked on the Mac: the panda (`Panda Bao Top`, 66,968 painted triangles, cream with black paint) slices with 41 + 41 changes between filaments 2 and 3, 196 / 649 mm³ per change, a prime tower, and every check passing.
 
 ## The 3D view
 
@@ -392,6 +404,7 @@ OrcaSlicer's profiles are AGPL-3.0, so they are read from the installed OrcaSlic
 
 | Version | Changes |
 |---|---|
+| 2026.11.16.2 | **Colour-painted 3MF objects** (`from_3mf.paint` auto/keep/drop): painted objects are sliced from a trimmed copy of the 3MF, paint included; paint filaments remapped by `filament_map`; new check `paint_applied`; dropped paint is a warning and an unreliable result unless accepted. OrcaSlicer's own flush matrix (its log) is the reference where it recomputes it. |
 | 2026.11.16.1 | **Flush volumes** (from a contaminated print: black → white purged 201 mm³ instead of 670). The colour-based matrix is written with `flush_multiplier` 1 (OrcaSlicer's default 0.3 under-purges); `intent.flush` (`auto`, a multiplier, `max`); `from_3mf.flush` (`keep`, or a warning when the project purges more); new check `flush_adequacy` per transition (soft; hard below half the minimum; acceptable); `estimate.tool_changes`. Fixed: a one-part object from a 3MF lost its filament (it took filament 1). |
 | 2026.11.14.3 | First P2S multi-filament comparison with OrcaSlicer 2.5.1's GUI (cabin C2, two PLA colours): 69 same, 4 close (time 5 s, volumes 0.2 mm³), 1 difference: the CLI writes `filament_maps` "1" for two filaments, the GUI "1 1". `finalize()` now writes one value per filament in `slice_info`, `model_settings` and `project_settings`, as the GUI does. `tools` with `color_changes`: a layer takes the new filament when its middle is above the change's z, as OrcaSlicer assigns height ranges (a change at exactly a layer top was reported as wrong filament). |
 | 2026.11.14.2 | **H2D support removed** (only the P2S can be tested here). A multi-extruder printer is refused with a clear message; `filaments[].extruder`, the filament → extruder map, per-extruder areas (placement and `bounds`), `shared_nozzle`, the `filament_map` archive check and the per-extruder `nozzle_volume_type` are gone. The last version with H2D is the git tag `h2d-last` (branch `h2d`); `docs/H2D.md` lists what was removed and what was learned. Benchmark `h2d_two_filaments` → `p2s_two_filaments`. `tools/compare_bambu.py`: multi-filament comparison (filament maps, layer filament lists, tool changes, flushes, prime tower, grams, settings) with a verdict per row, and an HTML report. |

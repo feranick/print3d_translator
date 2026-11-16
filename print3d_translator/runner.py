@@ -1,7 +1,7 @@
 """runner.py — one study end to end: validate, resolve profiles, load / orient / check / place the parts,
 write the flattened profiles, STLs and assemble list, run OrcaSlicer, fill in the archive's printer id,
 check everything independently, and write <name>.json (atomically).
-Version: 2026.11.16.1
+Version: 2026.11.16.2
 
 Study folder <name>/:
   profiles/          machine.json, process.json, filament_<i>.json (flattened copies; never the installed ones)
@@ -35,6 +35,7 @@ from . import mesh as M
 from . import orca
 from . import placement as PL
 from . import thumbs
+from . import threemf as T3
 from . import viewer
 from . import profiles as P
 
@@ -144,6 +145,13 @@ def prepare(name: str, study: dict, folder: Path, base_dir=None, exe: str | None
         brim_type = str(C._first(oproc.get("brim_type"), "auto_brim"))
         brim = 0.0 if brim_type == "no_brim" else _f(oproc.get("brim_width"), 5)
         fils = sorted({q["filament"] for q in parts} | {c["filament"] for c in (study.get("intent") or {}).get("color_changes") or []})
+        paint = o.get("_paint")
+        if paint and paint["mode"] == "keep":
+            bad_f = [f_ for f_ in paint["filaments"] if not 1 <= f_ <= n_fil]
+            if bad_f:
+                raise ValueError(f"object {oname}: its colour paint uses filament(s) {bad_f}; the study has {n_fil}: add "
+                                 f"filaments, or map them with from_3mf.filament_map")
+            fils = sorted(set(fils) | set(paint["filaments"]))
         volume = float(sum(q["volume"] for q in parts))
         part = {"tri": tri, "volume": volume, "volume_from": parts[0]["volume_from"] if len(parts) == 1 else
                 "+".join(sorted({q["volume_from"] for q in parts})), "area": M.area(tri), "parts_tri": ptri}
@@ -173,7 +181,8 @@ def prepare(name: str, study: dict, folder: Path, base_dir=None, exe: str | None
         n = int(o.get("copies", 1))
         for c in range(n):
             ident = oname if n == 1 else f"{oname}-{c + 1}"
-            instances.append({"id": ident, "object": oname, "tri": tri, "halo": halo,
+            instances.append({"id": ident, "object": oname, "tri": tri, "halo": halo, "paint": paint,
+                              "from_3mf": o.get("_from_3mf"),
                               "at": o.get("at"), "filaments": fils, "volume": volume, "settings": settings,
                               "parts": [{"name": q["name"], "filament": q["filament"], "tri": t_} for q, t_ in zip(parts, ptri)],
                               "supports": supports})
@@ -227,19 +236,69 @@ def prepare(name: str, study: dict, folder: Path, base_dir=None, exe: str | None
             marker = f"assemble_{n_assembled}"
         placed.append({"name": marker, "id": inst["id"], "object": inst["object"], "filament": inst["filaments"][0],
                        "filaments": inst["filaments"], "tri": p["tri"], "volume": inst["volume"],
-                       "settings": inst["settings"], "parts": part_tris})
-    write_json(folder / "assemble.json", orca.assemble_list(stl_objs, assembled=assembled))
+                       "settings": inst["settings"], "parts": part_tris, "paint": inst.get("paint")})
+    model_in = str(folder / "assemble.json")
+    src = study.get("_paint_3mf")
+    if src:
+        # paint 'keep': OrcaSlicer slices a trimmed copy of the project (the paint is not geometry we can pass)
+        by_oid = {i_["from_3mf"]["id"]: i_["id"] for i_ in instances if i_.get("from_3mf")}
+        model_in = str(folder / "model.3mf")
+        proj = {k: machine[k] for k in ("printable_area", "printable_height", "printer_model", "bed_exclude_area")
+                if k in machine}
+        # the project's filament list: without it OrcaSlicer counts one filament, maps all to it and turns the prime
+        # tower off ("disable prime tower for only one filament")
+        proj["filament_colour"] = [C._first(f_.get("filament_colour"), "#FFFFFF") for f_ in r["filaments"]]
+        proj["filament_settings_id"] = list(r["names"]["filaments"])
+        proj["filament_type"] = [C._first(f_.get("filament_type"), "PLA") for f_ in r["filaments"]]
+        proj["printer_settings_id"] = r["names"]["machine"]
+        proj["print_settings_id"] = r["names"]["process"]
+        tr = T3.write_trimmed(src["path"], model_in, src.get("plate"), [tuple(x) for x in src["select"]], by_oid,
+                              fmap=src.get("fmap"), settings=src.get("settings", "keep"), project=proj)
+        for pl_ in placed:
+            pl_["name"] = pl_["id"]             # the 3MF objects carry these names; matched to the markers after slicing
+        write_json(folder / "model_3mf.json", {k: v for k, v in tr.items()})
+    else:
+        write_json(folder / "assemble.json", orca.assemble_list(stl_objs, assembled=assembled))
     slice_dir = folder / "slice"
     if slice_dir.exists():
         shutil.rmtree(slice_dir)
     slice_dir.mkdir()
     argv = orca.command(exe, slice_dir, files["machine"], files["process"], files["filaments"],
-                        str(folder / "assemble.json"), r["plate"]["bed_type"])
+                        model_in, r["plate"]["bed_type"],
+                        colours=[C._first(f_.get("filament_colour"), "#FFFFFF") for f_ in r["filaments"]] if src else None)
     if study.get("allow_mix_temp"):
         argv.append("--allow-mix-temp")
     return {"name": name, "folder": folder, "exe": exe, "vendor": vendor, "resolved": r, "objects": objects,
             "placed": placed, "tower": plc["tower"], "files": files, "argv": argv, "slice_dir": slice_dir,
             "warnings": warnings, "used": used, "study": study, "instances": instances, "layout": {**layout, "strategy": plc.get("strategy")}}
+
+
+def _orca_flush_matrix(log) -> list[float] | None:
+    """The flush matrix OrcaSlicer computed from the filament colours (its log: 'flush_volumes_matrix after
+    computed: ...'): Bambu's model, or its measured table for Bambu's own colours. None if not logged."""
+    import re
+    try:
+        text = Path(log).read_text(errors="replace")
+    except OSError:
+        return None
+    m = re.findall(r"flush_volumes_matrix after computed: ([0-9.,]+)", text)
+    if not m:
+        return None
+    try:
+        return [float(x) for x in m[-1].strip(",").split(",") if x]
+    except ValueError:
+        return None
+
+
+def _match_markers(placed: list[dict], gcode_text: str) -> None:
+    """A sliced 3MF names its objects in the G-code its own way ('<name>' or '<name>_<n>'): each placed
+    object takes the marker that is its name or starts with it."""
+    import re
+    markers = list(dict.fromkeys(re.findall(r"^; printing object (\S+) id:\d+", gcode_text, re.M)))
+    for p in placed:
+        hit = [m for m in markers if m == p["id"]] or [m for m in markers if m.startswith(p["id"] + "_")]
+        if len(hit) == 1:
+            p["name"] = hit[0]
 
 
 def _load_parts(o: dict, base_dir, n_fil: int, oname: str, warnings: list) -> list[dict]:
@@ -492,6 +551,8 @@ def _run_once(name: str, study: dict, folder: str | Path, base_dir=None, result:
                 plain.write_text(text, encoding="utf-8")
             res["pauses"] = done
         a0 = A.read(arch)
+        if ctx["study"].get("_paint_3mf"):
+            _match_markers(ctx["placed"], (a0["gcode"] or b"").decode("utf-8", "replace"))
         ids = {o.get("name"): o.get("identify_id") for o in
                ((a0.get("slice_info") or {}).get("plates") or [{}])[0].get("objects", [])}
         head = G.parse("\n".join((a0["gcode"] or b"").decode("utf-8", "replace").splitlines()[:40])).header
@@ -509,6 +570,14 @@ def _run_once(name: str, study: dict, folder: str | Path, base_dir=None, result:
         checks = A.check_archive(a, plain.read_bytes() if plain.exists() else None, model_id, r["model"]["nozzle"],
                                  len(r["filaments"]))
         rt = A.roundtrip(r["machine"], r["process"], r["filaments"], a.get("project") or {}, P.orca_keys()["keys"])
+        orca_flush = _orca_flush_matrix(ctx["slice_dir"] / "orca.log")
+        d_ = rt["differ"].get("process.flush_volumes_matrix")
+        if d_ and orca_flush and [float(x) for x in d_[1]] == orca_flush:
+            # OrcaSlicer recomputed the matrix from the same colours (it does when a project is sliced with
+            # explicit colours), with Bambu's measured table for known colours: its numbers are the reference
+            rt["differ"].pop("process.flush_volumes_matrix")
+            rt.setdefault("normalized_by_orca", {})["process.flush_volumes_matrix"] = d_
+            rt["passed"] = not rt["differ"]
         checks["settings_roundtrip"] = {"passed": rt["passed"], "hard": True,
                                         "why": "every setting we wrote is the one OrcaSlicer sliced with",
                                         "got": {"compared": rt["compared"], "differ": dict(list(rt["differ"].items())[:20]),
@@ -521,9 +590,12 @@ def _run_once(name: str, study: dict, folder: str | Path, base_dir=None, result:
             return res
         Pg = G.parse(a["gcode"].decode("utf-8", errors="replace"))
         tb = next((o["bbox"] for o in ((a.get("plate_json") or {}).get("bbox_objects") or []) if o.get("name") == "wipe_tower"), None)
-        gc = C.check_gcode(Pg, r, ctx["placed"], tower_bbox=tb,
+        gc = C.check_gcode(Pg, r, ctx["placed"], tower_bbox=tb, flush_reference=orca_flush,
                            color_changes=(ctx["study"].get("intent") or {}).get("color_changes"))
         checks.update(gc["checks"])
+        pa = C.paint_applied(Pg, ctx["placed"])
+        if pa:
+            checks["paint_applied"] = pa
         if pauses:
             checks["pauses"] = C.check_pauses(a["gcode"].decode("utf-8", errors="replace"), pauses, pause_gcode)
         acc, unused = apply_accept(ctx["study"], checks, {p["name"]: p["object"] for p in ctx["placed"]})

@@ -1,7 +1,7 @@
 """check.py — independent checks of a sliced plate: the G-code (as gcode.py reads it) against the study,
 our flattened profiles and the placed geometry. Nothing here trusts OrcaSlicer's own summary; its
 estimates are only compared with ours.
-Version: 2026.11.16.1
+Version: 2026.11.16.2
 
 Each check is {passed, hard, why, got, expected, ...}. A failed hard check makes the result
 unreliable. The checks:
@@ -26,6 +26,8 @@ unreliable. The checks:
                     more than SEVERE_MAX mm farther than reach + 1 mm (supports.unsupported)
   long_bridges      bridges (unsupported stretches held at both ends) up to BRIDGE_MAX mm (soft)
   estimates         OrcaSlicer's filament lengths and weights = ours (soft)
+  paint_applied     (colour-painted 3MF objects) every filament the paint uses is printed in that object;
+                    hard. With paint 'drop' it fails: the object prints in one colour
   flush_adequacy    every filament change of the print purges at least flush.MIN_FRACTION of Bambu's
                     colour-based volume for its two colours (soft below it; hard below half of it)
 """
@@ -179,7 +181,7 @@ def category(feature: str) -> str:
 # ---------------------------------------------------------------- the checks
 
 def check_gcode(P: G.Parsed, resolved: dict, objects: list[dict], tower_bbox: list | None = None,
-                color_changes: list[dict] | None = None) -> dict:
+                color_changes: list[dict] | None = None, flush_reference: list[float] | None = None) -> dict:
     """objects: [{name (the G-code marker, e.g. 'part_1' or 'assemble_1'), filament (1-based), filaments (all
     of its parts', optional), tri (placed mesh), volume (mm3, exact when known), settings (its own process
     settings, optional)}]. color_changes: [{z, filament}]. Returns {checks, gcode (summary), estimate}."""
@@ -357,7 +359,7 @@ def check_gcode(P: G.Parsed, resolved: dict, objects: list[dict], tower_bbox: li
     # estimates (OrcaSlicer's vs ours)
     checks["estimates"], estimate = _estimates(P, fils, diam)
     estimate["tool_changes"] = tool_changes(P)
-    fa = flush_adequacy(P, resolved, diam)
+    fa = flush_adequacy(P, resolved, diam, flush_reference)
     if fa:
         checks["flush_adequacy"] = fa
     return {"checks": checks, "gcode": G.summary(P, diam), "estimate": estimate}
@@ -732,12 +734,14 @@ def tool_changes(P: G.Parsed) -> dict:
     return {"total": total, "by_transition": dict(sorted(by.items()))}
 
 
-def flush_adequacy(P: G.Parsed, resolved: dict, diam: list[float]) -> dict | None:
+def flush_adequacy(P: G.Parsed, resolved: dict, diam: list[float], reference: list[float] | None = None) -> dict | None:
     """Each filament change of the print against Bambu's colour-based purge for its two colours (flush.py):
     the firmware purge (';VG1 E' in the VFLUSH block of that change, x the incoming filament's cross-section)
     must be at least flush.MIN_FRACTION of the model's volume. Below: a warning (soft); below
     flush.HARD_FRACTION of that minimum: hard (the new colour comes out visibly mixed with the old one).
-    None with one filament."""
+    reference: OrcaSlicer's own computed matrix (n x n flat, from its log): where given, it is the volume the
+    minimum is taken from (Bambu's measured table for its own colours, e.g. orange -> black 166 vs the
+    formula's 215). None with one filament."""
     from . import flush as F
     fils = resolved["filaments"]
     if len(fils) < 2:
@@ -758,12 +762,16 @@ def flush_adequacy(P: G.Parsed, resolved: dict, diam: list[float]) -> dict | Non
         area = G.filament_area(diam[e["to"]] if e["to"] < len(diam) else 1.75)
         rows.setdefault(k, []).append(e["e_mm"] * area)
     out = []
+    nf = len(fils)
+    ref = reference if reference and len(reference) >= nf * nf else None
     for (a, b), vols in sorted(rows.items()):
-        need = F.minimum(colors[a], colors[b], extra)
+        model = ref[a * nf + b] if ref and ref[a * nf + b] > 0 else F.volume(colors[a], colors[b], extra)
+        need = round(F.MIN_FRACTION * model, 1)
         lo = min(vols)
         r = {"from": a + 1, "to": b + 1, "colors": [colors[a], colors[b]], "changes": len(vols),
              "purge_mm3": round(lo, 1), "purge_mean_mm3": round(sum(vols) / len(vols), 1), "minimum_mm3": need,
-             "model_mm3": F.volume(colors[a], colors[b], extra), "ratio": round(lo / need, 2) if need else None}
+             "model_mm3": model, "model_from": "orcaslicer" if ref and ref[a * nf + b] > 0 else "formula",
+             "ratio": round(lo / need, 2) if need else None}
         out.append(r)
         if need and lo < need - 0.5:
             hard = lo < F.HARD_FRACTION * need
@@ -776,3 +784,38 @@ def flush_adequacy(P: G.Parsed, resolved: dict, diam: list[float]) -> dict | Non
                   f"{F.MIN_FRACTION:g}; hard below {F.HARD_FRACTION:g} of that). Fix: intent.flush 'auto' (the default) "
                   "or a larger multiplier, or overrides.process.flush_volumes_matrix",
               hard=severe, got={"transitions": out, "tool_changes": tc}, problems=problems)
+
+
+def paint_applied(P: G.Parsed, placed: list[dict]) -> dict | None:
+    """Colour-painted 3MF objects: with paint 'keep', every filament the paint uses must be extruded within
+    that object's G-code (its object marker) and be changed into at least once (or start the print); with
+    paint 'drop' the paint is not printed, which fails (hard; acceptable with accept). None without paint."""
+    painted = [p for p in placed if p.get("paint") and p["paint"].get("triangles")]
+    if not painted:
+        return None
+    info, seg = P.seg_info, P.segments
+    printing = info[:, 0] == 1 if len(info) else np.zeros(0, dtype=bool)
+    into = {t["tool"] + 1 for t in P.tool_changes if not t["conditional"] and t["tool"] is not None and t["tool"] >= 0
+            and t["region"] in ("start", "print")}
+    rows, problems = [], []
+    for p in painted:
+        pt = p["paint"]
+        if pt["mode"] != "keep":
+            problems.append(f"object {p['object']} ('{pt.get('name')}'): {pt['triangles']} colour-painted triangles "
+                            f"printed in one colour (paint 'drop')")
+            rows.append({"object": p["object"], "mode": "drop", "triangles": pt["triangles"]})
+            continue
+        k = P.objects.index(p["name"]) if p["name"] in P.objects else -1
+        m = printing & (info[:, 3] == k) if k >= 0 and len(info) else np.zeros(len(info), dtype=bool)
+        got = {}
+        for f in pt["filaments"]:
+            got[f] = round(float(seg[m & (info[:, 1] == f - 1), 5].sum()), 1) if len(seg) else 0.0
+        missing = [f for f in pt["filaments"] if got.get(f, 0) <= 0 or f not in into]
+        if k < 0:
+            problems.append(f"object {p['object']}: not found in the G-code (marker {p['name']})")
+        elif missing:
+            problems.append(f"object {p['object']}: the paint uses filament(s) {missing}, not printed in it")
+        rows.append({"object": p["object"], "mode": "keep", "triangles": pt["triangles"], "filaments": pt["filaments"],
+                     "extruded_mm": got})
+    return _c(not problems, "colour-painted objects print in their painted filaments (paint 'keep' slices the 3MF "
+                            "itself; 'drop' prints one colour)", got={"objects": rows}, problems=problems)

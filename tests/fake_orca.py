@@ -38,6 +38,20 @@ def first(v, d=0.0):
         return d
 
 
+def from_project(path, out):
+    from print3d_translator import threemf as T3
+    r = T3.read(path)
+    objs = []
+    for ob in r["objects"]:
+        stl = M.write_stl(Path(out) / f"{ob['name']}.stl", ob["tri"])
+        lo, hi = M.bbox(ob["tri"])
+        paint = [st for st, n in (ob.get("paint") or {}).get("states", {}).items() if st > 0 and n]
+        mid = float(lo[2] + hi[2]) / 2
+        ranges = [{"min_z": mid, "max_z": float(hi[2]) + 1, "range_params": {"extruder": str(f)}} for f in paint[:1]]
+        objs.append({"path": stl, "filaments": [ob["filament"] or 1], "height_ranges": ranges})
+    return {"plates": [{"objects": objs}]}
+
+
 def main(argv):
     if "--help" in argv:
         print("OrcaSlicer-2.4.2:\nUsage: orca-slicer [ OPTIONS ] [ file.3mf/file.stl ... ]")
@@ -51,8 +65,11 @@ def main(argv):
         time.sleep(600)
     machine, process = [json.loads(Path(p).read_text()) for p in arg(argv, "--load-settings").split(";")]
     fils = [json.loads(Path(p).read_text()) for p in arg(argv, "--load-filaments").split(";")]
-    assemble = json.loads(Path(arg(argv, "--load-assemble-list")).read_text())
     out = Path(arg(argv, "--outputdir"))
+    if "--load-assemble-list" in argv:
+        assemble = json.loads(Path(arg(argv, "--load-assemble-list")).read_text())
+    else:                                          # a project sliced as it is (paint 'keep'): its objects, and
+        assemble = from_project(argv[-1], out)     # each paint filament printed from the object's middle up
     raw = lambda k: str(process.get(k)[0] if isinstance(process.get(k), list) else process.get(k))  # noqa: E731
     if "conflict" in modes or ("tree_conflict" in modes and "tree" in raw("support_type")
                               and raw("enable_support") in ("1", "true", "True")):

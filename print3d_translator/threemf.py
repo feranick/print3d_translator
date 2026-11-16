@@ -1,7 +1,7 @@
 """threemf.py — reads 3MF files: plain ones (core spec + production extension components) and Bambu Studio /
 OrcaSlicer projects (Metadata/model_settings.config: object and part names, part types, filaments,
 per-object settings, plates).
-Version: 2026.11.16.1
+Version: 2026.11.16.2
 
 What is read:
   meshes          every build item, its components (parts) with their transforms, in mm ('unit' converted)
@@ -11,8 +11,12 @@ What is read:
   settings        per-object metadata that are OrcaSlicer process settings (layer_height, wall_loops,
                   enable_support, brim_type, ...): returned as 'settings'
   plates          plate number, name and the objects on it; plate-local positions (Bambu's plate grid)
+  paint           per object: colour-painted triangles (MMU segmentation, 'paint_color' or PrusaSlicer's
+                  'slic3rpe:mmu_segmentation'), the filaments the paint uses (decoded), painted supports and
+                  seams. The paint itself is not geometry: format.expand decides to slice the 3MF directly
+                  (paint 'keep', write_trimmed) or to drop it with a warning.
 What is not read (reported in 'ignored'): variable layer height profiles (layer_heights_profile.txt),
-height-range modifiers (layer_config_ranges.xml), painted supports / seams / colours, per-part settings.
+height-range modifiers (layer_config_ranges.xml), per-part settings.
 
 Meshes are parsed with regular expressions (vertex x y z and triangle v1 v2 v3 in that order, as every
 slicer writes them; an object that does not match falls back to the XML parser): about 1 s per 10 MB.
@@ -112,6 +116,87 @@ def _apply(tri: np.ndarray, T: np.ndarray) -> np.ndarray:
     if not len(tri):
         return tri
     return tri @ T[:3, :3].T + T[:3, 3]
+
+
+# ---------------------------------------------------------------- paint (TriangleSelector strings)
+
+_PAINT = {"color": re.compile(rb'(?:paint_color|slic3rpe:mmu_segmentation)="([0-9A-Fa-f]+)"'),
+          "supports": re.compile(rb'(?:paint_supports|slic3rpe:custom_supports)="([0-9A-Fa-f]+)"'),
+          "seam": re.compile(rb'(?:paint_seam|slic3rpe:custom_seam)="([0-9A-Fa-f]+)"')}
+
+
+def _nibbles(code: str) -> list[int]:
+    """A painted triangle's string: hex digits read from the end, one 4-bit node each (PrusaSlicer's
+    FacetsAnnotation::set_triangle_from_string)."""
+    return [int(c, 16) for c in reversed(code)]
+
+
+def paint_leaves(code: str) -> list[int]:
+    """The states of a painted triangle's leaves. Each node: low 2 bits = number of split sides (0 = leaf);
+    a leaf's high 2 bits are its state, 3 meaning 'the next nibble + 3'; a split node has split + 1 children.
+    For colour paint, state n is filament n (1-based) and 0 the object's own filament."""
+    nb, leaves, i, stack = _nibbles(code), [], 0, 1
+    while stack and i < len(nb):
+        c = nb[i]
+        i += 1
+        stack -= 1
+        split = c & 3
+        if split:
+            stack += split + 1
+        else:
+            st = c >> 2
+            if st == 3:
+                st = nb[i] + 3
+                i += 1
+            leaves.append(st)
+    return leaves
+
+
+def paint_remap(code: str, mapping: dict) -> str:
+    """The same painted triangle with leaf states renamed (mapping {old: new}); unchanged elsewhere, so
+    an identity mapping returns the string as read (upper case)."""
+    nb, out, i, stack = _nibbles(code), [], 0, 1
+    while stack and i < len(nb):
+        c = nb[i]
+        i += 1
+        stack -= 1
+        split = c & 3
+        if split:
+            stack += split + 1
+            out.append(c)
+            continue
+        st = c >> 2
+        if st == 3:
+            st = nb[i] + 3
+            i += 1
+        st = mapping.get(st, st)
+        out.extend([st << 2] if st < 3 else [0b1100, st - 3])
+    out.extend(nb[i:])
+    return "".join("%X" % n for n in reversed(out))
+
+
+def paint_stats(body: bytes) -> dict:
+    """{color: painted triangles, supports, seam, states: {state: leaves}} of one mesh object's XML."""
+    out = {k: 0 for k in _PAINT}
+    states: dict[int, int] = {}
+    for k, rx in _PAINT.items():
+        codes = rx.findall(body)
+        out[k] = len(codes)
+        if k == "color":
+            for c in codes:
+                for st in paint_leaves(c.decode()):
+                    states[st] = states.get(st, 0) + 1
+    out["states"] = dict(sorted(states.items()))
+    return out
+
+
+def _add_paint(a: dict, b: dict) -> dict:
+    out = {k: a.get(k, 0) + b.get(k, 0) for k in _PAINT}
+    st = dict(a.get("states") or {})
+    for k, v in (b.get("states") or {}).items():
+        st[k] = st.get(k, 0) + v
+    out["states"] = dict(sorted(st.items()))
+    return out
 
 
 def _settings_xml(z: zipfile.ZipFile) -> tuple[dict, list]:
@@ -262,9 +347,11 @@ def _read(path: str | Path, plate: int | None = None, names: list[str] | None = 
             parts = []
             _collect(models, key, oid, T, parts, ms.get("parts", {}), top=True, meshes=meshes)
             obj_fil = ms.get("extruder")
+            paint = {"color": 0, "supports": 0, "seam": 0, "states": {}}
             for p in parts:
                 if p["filament"] is None:
                     p["filament"] = obj_fil
+                paint = _add_paint(paint, p.get("paint") or {})
             solid = [p for p in parts if p["subtype"] == SOLID]
             tri = np.concatenate([p["tri"] for p in solid]) * unit if meshes and solid else np.zeros((0, 3, 3))
             for p in parts:
@@ -282,7 +369,8 @@ def _read(path: str | Path, plate: int | None = None, names: list[str] | None = 
                 for p in parts:
                     p["tri"] = p["tri"] - shift
             out.append({"id": oid, "instance": inst, "name": name, "filament": obj_fil,
-                        "settings": ms.get("settings", {}), "plate": pl, "parts": parts, "tri": tri})
+                        "settings": ms.get("settings", {}), "plate": pl, "parts": parts, "tri": tri,
+                        "paint": paint, "plate_origin": origin})
         if not out:
             raise ThreeMFError(f"{path}: nothing selected (plate {plate}, objects {names}); "
                                f"objects: {[o.get('name') for o in settings.values()][:40]}")
@@ -311,10 +399,160 @@ def _collect(models: _Models, key: str, oid: str, T: np.ndarray, parts: list, pa
         ps = part_settings.get(pid or oid, {})
         parts.append({"id": pid or oid, "name": ps.get("name") or f"part{len(parts) + 1}",
                       "subtype": ps.get("subtype", SOLID), "filament": ps.get("extruder"),
-                      "tri": _apply(tri, T)})
+                      "tri": _apply(tri, T), "paint": paint_stats(body) if b"paint_" in body or b"slic3rpe:" in body
+                      else {"color": 0, "supports": 0, "seam": 0, "states": {}}, "file": key, "file_object": oid})
     for c in _COMP.findall(body):
         ca = _attrs(c)
         ckey = ca.get("p:path") or key
         cid = ca.get("objectid")
         _collect(models, ckey, cid, T @ _matrix(ca.get("transform")), parts, part_settings, False, depth + 1,
                  pid=cid if top else pid, meshes=meshes)
+
+
+# ---------------------------------------------------------------- a trimmed copy to slice directly (paint 'keep')
+
+DROP_FILES = ("Metadata/layer_heights_profile.txt", "Metadata/layer_config_ranges.xml", "Metadata/project_settings.config",
+              "Metadata/slice_info.config", "Metadata/filament_sequence.json", "Metadata/cut_information.xml")
+
+
+def write_trimmed(src: str | Path, dst: str | Path, plate: int | None, select: list[tuple[str, int]],
+                  names: dict, fmap: dict | None = None, settings: str = "keep", project: dict | None = None) -> dict:
+    """A copy of a Bambu Studio / OrcaSlicer project that OrcaSlicer's CLI slices as it is, paint included:
+    only the selected build items (select [(object id, instance)], their plate moved to plate 1's place),
+    one plate, each object renamed (names {object id: name}, the names the checks expect in the G-code).
+    fmap {3MF filament: study filament}: object / part 'extruder' and the colour paint's filament states
+    renamed. settings 'drop': the objects' and parts' own settings removed. project: the project settings
+    written instead of the source's (the bed the plate was laid out for: without it OrcaSlicer assumes a
+    200 x 200 bed and moves everything by the difference; the filament colours). Left out: other plates' objects
+    and model files, the project's settings (the study's profiles are loaded by the CLI), variable layer
+    heights, height-range modifiers, the slicer's cached results and pictures. Returns {objects, files,
+    remapped_paint (triangles), left_out}."""
+    src, dst = Path(src), Path(dst)
+    fmap = {int(a): int(b) for a, b in (fmap or {}).items() if int(a) != int(b)}
+    sel = {(str(o), int(i)) for o, i in select}
+    sel_ids = {o for o, _ in sel}
+    with zipfile.ZipFile(src) as z:
+        names_in = z.namelist()
+        models = _Models(z)
+        main = z.read(models.names["/3D/3dmodel.model"])
+        settings_xml, plates = _settings_xml(z)
+        bed = _bed(z)
+        origin = (0.0, 0.0)
+        if plate is not None and bed and len(plates) > 1:
+            k = plate - 1
+            cols = _plate_cols(len(plates))
+            origin = ((k % cols) * bed[0] * (1 + PLATE_GAP), -(k // cols) * bed[1] * (1 + PLATE_GAP))
+        # build items: the selected instances, moved by the plate origin
+        seen: dict[str, int] = {}
+
+        def item(m):
+            a = _attrs(m.group(1))
+            oid = a.get("objectid")
+            inst = seen.get(oid, 0)
+            seen[oid] = inst + 1
+            if (oid, inst) not in sel:
+                return b""
+            t = m.group(0)
+            tr = a.get("transform")
+            if tr and (origin[0] or origin[1]):
+                v = [float(x) for x in tr.split()]
+                v[9] -= origin[0]
+                v[10] -= origin[1]
+                t = t.replace(f'transform="{tr}"'.encode(), ('transform="' + " ".join(f"{x:.9g}" for x in v) + '"').encode())
+            return t
+        build = re.search(rb"(<build\b[^>]*>)(.*?)(</build>)", main, re.S)
+        items = re.sub(rb"<item\b([^>]*)/?>", item, build.group(2))
+        main = main[:build.start(2)] + items + main[build.end(2):]
+        # top-level objects: only the selected ones; the model files their components use
+        files = set()
+
+        def obj(m):
+            a = _attrs(m.group(1))
+            if a.get("id") not in sel_ids:
+                return b""
+            for c in _COMP.findall(m.group(2)):
+                ca = _attrs(c)
+                files.add(ca.get("p:path") or "/3D/3dmodel.model")
+            return m.group(0)
+        res = re.search(rb"(<resources>)(.*?)(</resources>)", main, re.S)
+        kept = _OBJ.sub(obj, res.group(2))
+        main = main[:res.start(2)] + kept + main[res.end(2):]
+        files.discard("/3D/3dmodel.model")
+        # model_settings.config
+        root = ET.fromstring(z.read("Metadata/model_settings.config"))
+        for o in list(root.findall("object")):
+            if o.get("id") not in sel_ids:
+                root.remove(o)
+                continue
+            for md in o.findall("metadata"):
+                k = md.get("key")
+                if k == "name":
+                    md.set("value", names.get(o.get("id"), md.get("value")))
+                elif k == "extruder" and md.get("value", "").isdigit():
+                    md.set("value", str(fmap.get(int(md.get("value")), int(md.get("value")))))
+                elif settings == "drop" and k and k not in NOT_SETTINGS:
+                    o.remove(md)
+            for p in o.findall("part"):
+                for md in p.findall("metadata"):
+                    k = md.get("key")
+                    if k == "extruder" and md.get("value", "").isdigit():
+                        md.set("value", str(fmap.get(int(md.get("value")), int(md.get("value")))))
+                    elif settings == "drop" and k and k not in NOT_SETTINGS:
+                        p.remove(md)
+        for pl in list(root.findall("plate")):
+            md = {m.get("key"): m for m in pl.findall("metadata")}
+            pid = int(md["plater_id"].get("value")) if "plater_id" in md else None
+            if plates and len(plates) > 1 and plate is not None and pid != plate:
+                root.remove(pl)
+                continue
+            if "plater_id" in md:
+                md["plater_id"].set("value", "1")
+            for k in ("thumbnail_file", "thumbnail_no_light_file", "top_file", "pick_file", "pattern_bbox_file"):
+                if k in md:
+                    pl.remove(md[k])
+            for mi in list(pl.findall("model_instance")):
+                mm = {m.get("key"): m.get("value") for m in mi.findall("metadata")}
+                if (mm.get("object_id"), int(mm.get("instance_id") or 0)) not in sel:
+                    pl.remove(mi)
+        for asm in root.findall("assemble"):
+            for it in list(asm):
+                if (it.get("object_id"), int(it.get("instance_id") or 0)) not in sel:
+                    asm.remove(it)
+        ms = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+        # write
+        remapped = 0
+        out_names = []
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zo:
+            if project is not None:
+                import json
+                zo.writestr("Metadata/project_settings.config", json.dumps(project, indent=4))
+                out_names.append("Metadata/project_settings.config")
+            for n in names_in:
+                key = "/" + n.lstrip("/")
+                if n in DROP_FILES or n.startswith("Auxiliaries/") or re.match(r"Metadata/(plate|top|pick)_.*", n):
+                    continue
+                if key.lower().endswith(".model") and key != "/3D/3dmodel.model" and key not in files:
+                    continue
+                if key == "/3D/3dmodel.model":
+                    data = main
+                elif n == "Metadata/model_settings.config":
+                    data = ms
+                elif n == "3D/_rels/3dmodel.model.rels":
+                    data = re.sub(rb'<Relationship\b[^>]*Target="([^"]+)"[^>]*/>',
+                                  lambda m: m.group(0) if m.group(1).decode() in files else b"", z.read(n))
+                elif key in files and fmap:
+                    data = z.read(n)
+                    cnt = [0]
+
+                    def rp(m):
+                        cnt[0] += 1
+                        return m.group(1) + paint_remap(m.group(2).decode(), fmap).encode() + b'"'
+                    data = re.sub(rb'((?:paint_color|slic3rpe:mmu_segmentation)=")([0-9A-Fa-f]+)"', rp, data)
+                    remapped += cnt[0]
+                else:
+                    data = z.read(n)
+                zo.writestr(n, data)
+                out_names.append(n)
+    return {"objects": sorted(sel), "files": out_names, "remapped_paint": remapped, "origin": origin,
+            "left_out": [n for n in names_in if n not in out_names]}
