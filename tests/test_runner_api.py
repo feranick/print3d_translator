@@ -662,3 +662,61 @@ def test_unpainted_3mf_unchanged(fake):
                                         "parts": [{"id": 1, "box": (30, 30, 6)}]}])
     res = R.run_study("pu", p2s(fake, objects=[{"from_3mf": {"path": str(p)}}]), fake / "pu")
     assert res["reliable"] and "paint_applied" not in res["checks"] and (fake / "pu" / "assemble.json").exists()
+
+
+# ------------------------------------------------------------- 2026.11.18.1: sandboxed MCP clients (Gemini Mac app)
+
+def test_settings_from_config_file(tmp_path, monkeypatch):
+    from print3d_translator import settings as S
+    cfg = tmp_path / "p3dt.json"
+    monkeypatch.setenv("P3DT_CONFIG", str(cfg))
+    monkeypatch.delenv("P3DT_ORCA_PROFILES", raising=False)
+    monkeypatch.setenv("P3DT_WORKERS", "3")
+    S.write({"orca_profiles": "~/profiles", "P3DT_WORKERS": "1"})
+    assert json.loads(cfg.read_text()) == {"P3DT_ORCA_PROFILES": "~/profiles", "P3DT_WORKERS": "1"}
+    S.load()
+    assert os.environ["P3DT_ORCA_PROFILES"] == os.path.expanduser("~/profiles")    # from the file
+    assert os.environ["P3DT_WORKERS"] == "3"                                         # the environment wins
+    assert S.LOADED["applied"] == ["P3DT_ORCA_PROFILES"]
+    with pytest.raises(ValueError, match="unknown setting"):
+        S.write({"P3DT_COLOUR": "x"})
+    cfg.write_text('{"nope": 1}')
+    assert "unknown setting" in S.load()["error"]                                   # reported, never raised
+    monkeypatch.delenv("P3DT_ORCA_PROFILES", raising=False)
+
+
+def test_worker_process_refused_runs_in_process(fake, monkeypatch):
+    real = api.subprocess.Popen
+
+    def refuse(argv, *a, **kw):
+        if "run-request" in argv:
+            raise PermissionError(1, "Operation not permitted")
+        return real(argv, *a, **kw)
+    monkeypatch.setattr(api.subprocess, "Popen", refuse)
+    out = api.run({"one": p2s(fake)}, wait=60)
+    assert out["studies"]["one"]["reliable"], out["studies"]["one"].get("why")
+    assert "worker processes are not permitted here" in out["worker"]
+    req = json.loads((Path(out["request"]) / "request.json").read_text())
+    assert req["worker"] == "in_process" and req["pid"] == os.getpid()
+
+
+def test_orcaslicer_refused_is_explained(fake, monkeypatch):
+    from print3d_translator import orca as O
+
+    def refuse(argv, *a, **kw):
+        raise PermissionError(1, "Operation not permitted")
+    monkeypatch.setattr(O.subprocess, "Popen", refuse)
+    res = R.run_study("np", p2s(fake), fake / "np")
+    assert not res["ok"] and res["slicer"]["name"] == "NOT_PERMITTED"
+    assert "OrcaSlicer could not be started" in res["why"] and "Full Access" in res["why"]
+
+
+def test_mcp_module_import_does_no_slow_work(monkeypatch):
+    """The handshake must answer fast: importing the API runs neither OrcaSlicer nor a profile scan."""
+    import importlib
+    from print3d_translator import orca as O, profiles as P_
+    calls = []
+    monkeypatch.setattr(O.subprocess, "run", lambda *a, **k: calls.append(a))
+    monkeypatch.setattr(P_, "find_profiles", lambda *a, **k: calls.append("profiles"))
+    importlib.reload(api)
+    assert calls == []

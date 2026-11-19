@@ -1,7 +1,7 @@
 """runner.py — one study end to end: validate, resolve profiles, load / orient / check / place the parts,
 write the flattened profiles, STLs and assemble list, run OrcaSlicer, fill in the archive's printer id,
 check everything independently, and write <name>.json (atomically).
-Version: 2026.11.16.2
+Version: 2026.11.18.1
 
 Study folder <name>/:
   profiles/          machine.json, process.json, filament_<i>.json (flattened copies; never the installed ones)
@@ -520,8 +520,8 @@ def _run_once(name: str, study: dict, folder: str | Path, base_dir=None, result:
         res["files"]["command"] = str(ctx["slice_dir"] / "command.json")
         if not run["ok"]:
             why = ("cancelled" if run["cancelled"] else f"timed out after {timeout_of(study):g} s (run.timeout_s)"
-                   if run["timed_out"] else f"OrcaSlicer stopped: {run['name']} ({run['code']})"
-                   + (f": {run['fix']}" if run["fix"] else ""))
+                   if run["timed_out"] else (f"OrcaSlicer could not be started: {run['fix']}" if run["name"] in ("NOT_PERMITTED", "NOT_STARTED")
+                   else f"OrcaSlicer stopped: {run['name']} ({run['code']})" + (f": {run['fix']}" if run["fix"] else "")))
             res["why"] = why
             res["errors"] = [why]
             log = ctx["slice_dir"] / "orca.log"

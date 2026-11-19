@@ -60,7 +60,7 @@ OrcaSlicer versions are in the README; this file keeps decisions, setup, lessons
 
 - `/Applications/OrcaSlicer.app` = 2.5.1; `/Applications/OrcaSlicer-2.4.2.app` kept for comparison.
 - JSON profile tree: `~/Software/orcaslicer-src` (sparse checkout of OrcaSlicer's source, tag v2.5.1).
-  2.5 apps ship only the compiled `BBL.opc`. `P3DT_ORCA_PROFILES` points at it, set in `~/.profile`
+  2.5 apps ship only the compiled `BBL.opc`. `P3DT_ORCA_PROFILES` points at it, set in `~/.profile` (and, for clients without env fields, ~/.config/p3dt/config.json via `p3dt config`)
   and in the p3dt entry ("env") of `claude_desktop_config.json`. Not in llm-translators' `config/env`.
 - Vendor profiles 02.08.00.16; `status` shows `profiles_version.match`.
 - The MCP server runs from the project's `.venv` (Python 3.12, build123d 0.13.0,
@@ -142,6 +142,11 @@ OrcaSlicer versions are in the README; this file keeps decisions, setup, lessons
   count as one and the prime tower is turned off unless `--filament-colour` is given; with colours given it
   recomputes the flush matrix (Bambu's measured table: orange -> black 166 vs our formula's 215). Panda on the
   Mac: reliable, 82 changes 2<->3, paint_applied and flush_adequacy pass. Basket (unpainted): unchanged path.
+
+- **2026.11.18.1:** for the Gemini Mac app (Local MCP): handshake measured at 0.2 s (no slow work at import);
+  no multiprocessing in p3dt (worker = one subprocess, falls back to a thread; OrcaSlicer must be startable,
+  else NOT_PERMITTED with the fix); settings from ~/.config/p3dt/config.json (`p3dt config`); README lists
+  the folders and programs a customized sandbox must allow.
 
 ## Open
 

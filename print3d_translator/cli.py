@@ -1,5 +1,5 @@
 """cli.py — the command line. Every command prints JSON; '-' reads the studies from stdin.
-Version: 2026.10.24.10
+Version: 2026.11.18.1
 
     p3dt status                         versions; OrcaSlicer and its profiles found or not
     p3dt format                         the study format
@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -39,6 +40,10 @@ def _print(obj) -> None:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="p3dt", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("config", help="show or write ~/.config/p3dt/config.json (settings for MCP clients without "
+                                       "environment variables)")
+    s.add_argument("pairs", nargs="*", metavar="KEY=VALUE", help="e.g. P3DT_ORCA_PROFILES=~/Software/orcaslicer-src/"
+                   "resources/profiles (an empty VALUE removes the key)")
     s = sub.add_parser("status")
     s.add_argument("request", nargs="?")
     s.add_argument("--wait", type=float, default=0.0)
@@ -68,6 +73,22 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("folder")
     a = ap.parse_args(argv)
 
+    if a.cmd == "config":
+        from . import settings as S
+        if a.pairs:
+            bad = [x for x in a.pairs if "=" not in x]
+            if bad:
+                print(f"p3dt config: give KEY=VALUE, not {bad}", file=sys.stderr)
+                return 2
+            try:
+                S.write(dict(x.split("=", 1) for x in a.pairs))
+            except ValueError as e:
+                print(f"p3dt config: {e}", file=sys.stderr)
+                return 2
+        _print({"file": str(S.path()), "settings": S.read() if S.path().is_file() else {},
+                "environment_wins": {k: os.environ[k] for k in S.KEYS if k in os.environ
+                                     and k not in S.LOADED["applied"]}})
+        return 0
     if a.cmd == "status":
         if a.request:
             st = api.status(a.request, a.wait)

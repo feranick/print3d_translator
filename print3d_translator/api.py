@@ -1,5 +1,5 @@
 """api.py — what the CLI and the MCP server call. JSON in, JSON out.
-Version: 2026.11.14.2
+Version: 2026.11.18.1
 
     tool_status()                 versions; OrcaSlicer and its profiles found or not; build123d
     study_format()                the study format (with tool_status), for the caller to read
@@ -16,7 +16,7 @@ Version: 2026.11.14.2
 Local only: studies run in a background process (P3DT_WORKERS at once, default 2) that writes each
 result as <name>/<name>.json; status reads files, so any process can collect a request. Nothing
 is ever sent to a printer.
-Environment: P3DT_ORCA, P3DT_ORCA_PROFILES, P3DT_OUT (~/p3dt_runs), P3DT_WORKERS (2),
+Environment (or ~/.config/p3dt/config.json, settings.py): P3DT_ORCA, P3DT_ORCA_PROFILES, P3DT_OUT (~/p3dt_runs), P3DT_WORKERS (2),
 P3DT_TIMEOUT (600 s per study), P3DT_MAX_TIMEOUT (cap for a study's run.timeout_s).
 """
 from __future__ import annotations
@@ -35,6 +35,13 @@ from . import format as F
 from . import mesh as M
 from . import orca
 from . import profiles as P
+from . import settings as S
+
+S.load()                    # ~/.config/p3dt/config.json: for MCP clients that cannot set environment variables
+
+NO_PROCESSES = ("worker processes are not permitted here, so the studies run inside the MCP server's own process "
+                "(slower answers while slicing); OrcaSlicer itself still has to be started as a program: if that is "
+                "refused too, give this app Full Access, or allow it to run /Applications/OrcaSlicer.app")
 
 
 def out_root() -> Path:
@@ -57,7 +64,10 @@ def tool_status() -> dict:
     st = {"translator": __version__, "orca": orca.status(), "workers": workers(),
           "timeout_s": float(os.environ.get("P3DT_TIMEOUT", 600)), "out": str(out_root()),
           "executor": {"kind": "local", "caps": {"timeout_s": os.environ.get("P3DT_MAX_TIMEOUT")}},
-          "printer": "none: files only, never sent", "python": sys.executable}
+          "printer": "none: files only, never sent", "python": sys.executable,
+          "config": {"file": str(S.path()), "exists": S.path().is_file(), "applied": S.LOADED["applied"],
+                     **({"error": S.LOADED["error"]} if S.LOADED["error"] else {})},
+          **({"in_process": True} if os.environ.get("P3DT_IN_PROCESS") in ("1", "true", "yes") else {})}
     try:
         import build123d
         st["build123d"] = getattr(build123d, "__version__", "installed")
@@ -99,11 +109,35 @@ def start(studies: dict, base_dir: str | None = None, prefix: str = "run") -> Pa
     req = {"created": time.time(), "translator": __version__, "names": list(studies),
            "base_dir": str(Path(base_dir).resolve()) if base_dir else None}
     log = open(d / "worker.log", "w")
-    p = subprocess.Popen([sys.executable, "-m", "print3d_translator.cli", "run-request", str(d)],
-                         stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True,
-                         env={**os.environ})
-    req["pid"] = p.pid
+    p = None
+    if os.environ.get("P3DT_IN_PROCESS", "") not in ("1", "true", "yes"):
+        try:
+            p = subprocess.Popen([sys.executable, "-m", "print3d_translator.cli", "run-request", str(d)],
+                                 stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True,
+                                 env={**os.environ})
+        except OSError as e:            # a sandbox that refuses child processes (PermissionError: Operation not permitted)
+            log.write(f"background worker not started: {type(e).__name__}: {e}\n")
+            log.flush()
+            req["worker_note"] = f"{NO_PROCESSES} ({type(e).__name__}: {e})"
+    if p is not None:
+        req["pid"] = p.pid
+        req["worker"] = "process"
+    else:
+        req["pid"] = os.getpid()        # the server itself: alive as long as the work can go on
+        req["worker"] = "in_process"
+        req.setdefault("worker_note", "P3DT_IN_PROCESS: the studies run inside the MCP server's own process")
     (d / "request.json").write_text(json.dumps(req, indent=1))
+    if p is None:
+        import threading
+
+        def work():
+            try:
+                run_request(d)
+            except Exception as e:                  # noqa: BLE001 (reported through the request folder)
+                log.write(f"in-process worker failed: {type(e).__name__}: {e}\n")
+            finally:
+                log.close()
+        threading.Thread(target=work, daemon=True, name=f"p3dt-{d.name}").start()
     return d
 
 
@@ -138,6 +172,8 @@ def _collect(d: Path) -> dict:
     req = json.loads((d / "request.json").read_text()) if (d / "request.json").exists() else {}
     names = req.get("names") or json.loads((d / "studies.json").read_text()).keys()
     out = {"request": str(d), "translator": __version__, "studies": {}, "pending": [], "progress": {}}
+    if req.get("worker_note"):
+        out["worker"] = req["worker_note"]
     worker_alive = _alive(req.get("pid"))
     for n in names:
         rf = d / n / f"{n}.json"

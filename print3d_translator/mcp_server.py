@@ -1,6 +1,6 @@
 """mcp_server.py — MCP server (stdio): lets LLM-based tools turn parts into checked Bambu Lab print files
 with OrcaSlicer. It never talks to a printer.
-Version: 2026.11.16.2
+Version: 2026.11.18.1
 
 Tools (all JSON):
   study_format      the study format: printer, filaments, objects, intent, overrides. Read it first.
@@ -13,7 +13,9 @@ Tools (all JSON):
   make_view         a self-contained 3D view (.view.html) of a finished study
   cancel            stops a request's studies
 
-Run:  p3dt-mcp          (stdio; local only)
+Run:  p3dt-mcp          (stdio; local only). Startup does no slow work (no OrcaSlicer, no profiles): the
+      handshake answers in about 0.2 s; OrcaSlicer is looked at on the first tool call. Settings come from the
+      environment or ~/.config/p3dt/config.json ('p3dt config'), for clients that cannot set variables.
 """
 from __future__ import annotations
 
@@ -51,6 +53,11 @@ Polling costs tokens: when a run needs more than about 5 minutes, tell the user 
 Units: mm, degrees C, %, mm/s, g, s."""
 
 server = _Server("print3d-translator", instructions=INSTRUCTIONS)
+try:                                    # report p3dt's version in the handshake, not the SDK's
+    from . import __version__
+    server._mcp_server.version = __version__
+except AttributeError:
+    pass
 
 
 @server.tool()

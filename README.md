@@ -384,12 +384,60 @@ Claude desktop config:
 {"mcpServers": {"p3dt": {"command": "/Users/feranick/Software/print3d_translator/.venv/bin/p3dt-mcp"}}}
 ```
 
+### Other MCP clients and sandboxes (e.g. the Gemini Mac app)
+
+- **Startup.** The handshake answers in about 0.2 s: importing the server runs neither OrcaSlicer nor a profile scan (a test checks it). OrcaSlicer is looked at on the first tool call (`study_format`; its `--help` is run once and cached). Time it on your Mac with `.venv/bin/python tools/mcp_handshake.py /full/path/.venv/bin/p3dt-mcp` (Gemini gives up after about 2 s).
+- **No worker pools.** p3dt does not use `multiprocessing` (no SemLock). It starts at most two kinds of programs: a background worker (`python -m print3d_translator.cli run-request`, so slices outlive the 50 s tool call) and OrcaSlicer. Where the sandbox refuses the worker, the studies run in a thread of the server itself, and the answer says so (`worker`). OrcaSlicer must still be started; if that is refused, the study fails with `NOT_PERMITTED`: "starting OrcaSlicer is not permitted here: give this app Full Access…". b3dt goals are built in the same process (build123d-translator's own pool is not used). `P3DT_IN_PROCESS=1` asks for the thread directly.
+- **Settings without environment variables.** Settings are read from the environment, then from `~/.config/p3dt/config.json` (another file: `P3DT_CONFIG`). Write it once:
+
+  ```bash
+  ~/Software/print3d_translator/.venv/bin/p3dt config P3DT_ORCA_PROFILES=$HOME/Software/orcaslicer-src/resources/profiles
+  ```
+
+  The command is then just `/Users/feranick/Software/print3d_translator/.venv/bin/p3dt-mcp`. Alternatively: `/usr/bin/env P3DT_ORCA_PROFILES=/Users/feranick/Software/orcaslicer-src/resources/profiles /Users/feranick/Software/print3d_translator/.venv/bin/p3dt-mcp`. `study_format`'s `status.config` shows which file was read and which settings it applied.
+
+**What a customized sandbox must allow** (Full Access needs none of this):
+
+| | Path | Access |
+|---|---|---|
+| p3dt | `~/Software/print3d_translator` (code, editable install) and its `.venv` | read, run `.venv/bin/p3dt-mcp` |
+| Python | `/opt/local/Library/Frameworks/Python.framework/Versions/3.12` (MacPorts; the `.venv` points there) | read, run |
+| build123d-translator (b3dt goals only) | `~/Software/llm-translators/build123d-translator` | read |
+| OrcaSlicer | `/Applications/OrcaSlicer.app` (runs it; reads `Contents/Resources/profiles` for the version check) | read, **start the program** |
+| Profiles | `~/Software/orcaslicer-src/resources/profiles` | read |
+| Settings | `~/.config/p3dt/config.json` | read |
+| Runs | `~/p3dt_runs` (`P3DT_OUT`): every request, profile copy, slice and result | read, write |
+| OrcaSlicer's scratch | `/private/tmp/orcaslicer_<uid>/` (its model backups during a slice) | read, write |
+| Your parts | wherever the studies point (STEP, STL, 3MF files: e.g. `~/b3d_parts`, `~/p3dt_runs/makerworld`) | read |
+| Programs | the background worker (optional, falls back) and OrcaSlicer (required); creating a process group (optional, falls back) | start |
+| Network | none: p3dt never talks to a printer or the internet | — |
+
+These paths come from the `.venv` and from OrcaSlicer's logs. OrcaSlicer may touch other places in some cases: if a sliced study fails inside the sandbox, look at `orca.log` in that study's `slice/` folder first.
+
+**Setting up p3dt in the Gemini Mac app:**
+
+1. Write the settings once (Gemini has no field for environment variables):
+
+   ```bash
+   ~/Software/print3d_translator/.venv/bin/p3dt config P3DT_ORCA_PROFILES=$HOME/Software/orcaslicer-src/resources/profiles
+   ```
+
+2. Check that the server starts fast enough (well under 2 s):
+
+   ```bash
+   cd ~/Software/print3d_translator && .venv/bin/python tools/mcp_handshake.py "$PWD/.venv/bin/p3dt-mcp"
+   ```
+
+3. In Gemini, add a Local MCP server with the command `/Users/feranick/Software/print3d_translator/.venv/bin/p3dt-mcp` (no arguments).
+4. Choose **Full Access**, or a customized sandbox that allows everything in the table above.
+5. Ask Gemini to call `study_format`. Its `status` should show OrcaSlicer's version, the profiles folder and `config.applied: ["P3DT_ORCA_PROFILES"]`. A `worker` note in a run's answer means the studies ran inside the server's process (slower answers while slicing, same results). `NOT_PERMITTED` means the sandbox refused to start OrcaSlicer.
+
 ## Files
 
 ```
 print3d_translator/   profiles.py geometry.py placement.py orca.py gcode.py gcode3mf.py check.py
                       format.py runner.py api.py cli.py mcp_server.py mesh.py data/orca_keys.json
-tools/                orca_keys.py (key data from OrcaSlicer's PrintConfig.cpp), spike.py (real-CLI experiments),
+tools/                orca_keys.py (key data from OrcaSlicer's PrintConfig.cpp), spike.py (real-CLI experiments), mcp_handshake.py,
                       compare_bambu.py (GUI export vs p3dt, HTML report), support_corpus.py
 docs/H2D.md           the removed H2D support: what it was, what was learned, how to bring it back
 status/               bstat, a separate read-only printer status monitor (web page, terminal, window); see status/README.md
@@ -404,6 +452,7 @@ OrcaSlicer's profiles are AGPL-3.0, so they are read from the installed OrcaSlic
 
 | Version | Changes |
 |---|---|
+| 2026.11.18.1 | **Sandboxed MCP clients** (the Gemini Mac app): settings from `~/.config/p3dt/config.json` (`p3dt config KEY=VALUE`; the environment wins); where the background worker may not be started the studies run in the server's process (`worker` says so; `P3DT_IN_PROCESS=1`); OrcaSlicer refused → `NOT_PERMITTED` with the fix; the handshake reports p3dt's version; `tools/mcp_handshake.py` times a server's startup (0.2 s). |
 | 2026.11.16.2 | **Colour-painted 3MF objects** (`from_3mf.paint` auto/keep/drop): painted objects are sliced from a trimmed copy of the 3MF, paint included; paint filaments remapped by `filament_map`; new check `paint_applied`; dropped paint is a warning and an unreliable result unless accepted. OrcaSlicer's own flush matrix (its log) is the reference where it recomputes it. |
 | 2026.11.16.1 | **Flush volumes** (from a contaminated print: black → white purged 201 mm³ instead of 670). The colour-based matrix is written with `flush_multiplier` 1 (OrcaSlicer's default 0.3 under-purges); `intent.flush` (`auto`, a multiplier, `max`); `from_3mf.flush` (`keep`, or a warning when the project purges more); new check `flush_adequacy` per transition (soft; hard below half the minimum; acceptable); `estimate.tool_changes`. Fixed: a one-part object from a 3MF lost its filament (it took filament 1). |
 | 2026.11.14.3 | First P2S multi-filament comparison with OrcaSlicer 2.5.1's GUI (cabin C2, two PLA colours): 69 same, 4 close (time 5 s, volumes 0.2 mm³), 1 difference: the CLI writes `filament_maps` "1" for two filaments, the GUI "1 1". `finalize()` now writes one value per filament in `slice_info`, `model_settings` and `project_settings`, as the GUI does. `tools` with `color_changes`: a layer takes the new filament when its middle is above the change's z, as OrcaSlicer assigns height ranges (a change at exactly a layer top was reported as wrong filament). |

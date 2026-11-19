@@ -1,6 +1,6 @@
 """orca.py — the OrcaSlicer command line: find it, tell its version, build the command, run it in its
 own process group with a timeout and a cancel flag, and decode its exit status.
-Version: 2026.11.16.2
+Version: 2026.11.18.1
 
 The translator never asks OrcaSlicer to do anything but slice files: no printer, network or cloud
 options are ever passed. Geometry comes in through an assemble list (--load-assemble-list): one STL
@@ -89,13 +89,18 @@ def version(exe: str) -> str | None:
     return _version(exe, stamp)
 
 
+RUN_ERROR: dict = {}         # exe -> why it could not be run (e.g. a sandbox: PermissionError)
+
+
 @lru_cache(maxsize=8)
 def _version(exe: str, stamp) -> str | None:
     try:
         out = subprocess.run([exe, "--help"], capture_output=True, text=True, timeout=60,
                              stdin=subprocess.DEVNULL)
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired) as e:
+        RUN_ERROR[exe] = f"{type(e).__name__}: {e}"
         return None
+    RUN_ERROR.pop(exe, None)
     m = re.search(r"OrcaSlicer[- ]v?(\d+\.\d+\.\d+(?:[-.][A-Za-z0-9]+)*)", out.stdout + out.stderr)
     return m.group(1) if m else None
 
@@ -111,6 +116,10 @@ def status() -> dict:
     prof = profiles.find_profiles(exe)
     out = {"exe": exe, "version": v, "pinned": PINNED, "matches": v == PINNED,
            "profiles": str(prof) if prof else None}
+    if v is None and exe in RUN_ERROR:
+        out["run_error"] = RUN_ERROR[exe] + (" (starting OrcaSlicer is not permitted here: give this app Full Access, or "
+                                             "allow it to run OrcaSlicer.app)" if "ermission" in RUN_ERROR[exe] or
+                                             "not permitted" in RUN_ERROR[exe] else "")
     pv = profiles.profile_versions(exe, prof)
     if pv["installed"] and pv["read"]:
         out["profiles_version"] = {"read": pv["read"], "installed": pv["installed"], "match": pv["match"]}
@@ -204,8 +213,16 @@ def run(argv: list[str], cwd: str | Path, timeout: float = 600, cancel_file: str
     t0 = time.monotonic()
     timed_out = cancelled = False
     with open(cwd / "orca.stdout", "w") as so, open(cwd / "orca.stderr", "w") as se:
-        p = subprocess.Popen(argv, cwd=cwd, stdout=so, stderr=se, stdin=subprocess.DEVNULL,
-                             start_new_session=True)
+        try:
+            p = subprocess.Popen(argv, cwd=cwd, stdout=so, stderr=se, stdin=subprocess.DEVNULL,
+                                 start_new_session=True)
+        except PermissionError:
+            try:                    # some sandboxes refuse a new session but allow the program itself
+                p = subprocess.Popen(argv, cwd=cwd, stdout=so, stderr=se, stdin=subprocess.DEVNULL)
+            except OSError as e:
+                return _not_started(argv, e, t0)
+        except OSError as e:
+            return _not_started(argv, e, t0)
         while True:
             try:
                 p.wait(timeout=0.5)
@@ -234,16 +251,33 @@ def run(argv: list[str], cwd: str | Path, timeout: float = 600, cancel_file: str
     return out
 
 
+def _not_started(argv: list[str], e: OSError, t0: float) -> dict:
+    perm = isinstance(e, PermissionError) or getattr(e, "errno", None) in (1, 13)
+    fix = (f"starting OrcaSlicer ({argv[0]}) is not permitted here: give this app Full Access, or allow it to run "
+           f"OrcaSlicer.app and read / write the folders in the README ('Sandboxed MCP clients')" if perm else
+           f"OrcaSlicer could not be started ({argv[0]}): check P3DT_ORCA")
+    return {"returncode": None, "code": None, "name": "NOT_PERMITTED" if perm else "NOT_STARTED", "fix": fix,
+            "seconds": round(time.monotonic() - t0, 2), "timed_out": False, "cancelled": False, "ok": False,
+            "stdout": "", "stderr": f"{type(e).__name__}: {e}"}
+
+
 def _kill_group(p: subprocess.Popen) -> None:
-    try:
-        os.killpg(p.pid, signal.SIGTERM)
-        p.wait(timeout=5)
-    except (ProcessLookupError, subprocess.TimeoutExpired):
+    """Stops OrcaSlicer: its whole process group when it has its own session, else the process alone."""
+    def send(sig):
         try:
-            os.killpg(p.pid, signal.SIGKILL)
-        except ProcessLookupError:
+            if os.getpgid(p.pid) == p.pid:
+                os.killpg(p.pid, sig)
+            else:
+                p.send_signal(sig)
+        except (ProcessLookupError, PermissionError):
             pass
+    send(signal.SIGTERM)
+    try:
+        p.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        send(signal.SIGKILL)
         p.wait()
 
 
 version.cache_clear = _version.cache_clear     # tests clear the cache
+
