@@ -1,10 +1,11 @@
 # print3d_translator: planning
 
 Session context. A new chat starts with "Read planning.md and start."
-Status (2026-11-14): **2026.11.14.3, complete end to end, P2S and H2S only (H2D removed), pinned to
-OrcaSlicer 2.5.1, verified on the Mac through MCP** (bench 3/3; cabin parts, colour change + pause and
-A350 plate 1 reliable or accepted). A350 plate 1 printed successfully on the real P2S.
-194 tests pass, 11 skip (sandbox). Details of the study format, the checker, placement, 3MF input and
+Status (2026-11-23): **2026.11.23.1, complete end to end, P2S and H2S only (H2D removed), pinned to
+OrcaSlicer 2.5.2, verified on the Mac through MCP** (bench 3/3; cabin C2, the painted panda and the CAT
+keychain reliable, same results as on 2.5.1). A350 plate 1 printed successfully on the real P2S.
+Since 2026-11-14: colour-based flush (11.16.1), painted 3MF objects (11.16.2), sandboxed MCP clients (11.18.1).
+224 tests pass, 12 skip (sandbox). Details of the study format, the checker, placement, 3MF input and
 OrcaSlicer versions are in the README; this file keeps decisions, setup, lessons and history.
 
 ## Decisions
@@ -58,8 +59,8 @@ OrcaSlicer versions are in the README; this file keeps decisions, setup, lessons
 
 ## Mac setup (current)
 
-- `/Applications/OrcaSlicer.app` = 2.5.1; `/Applications/OrcaSlicer-2.4.2.app` kept for comparison.
-- JSON profile tree: `~/Software/orcaslicer-src` (sparse checkout of OrcaSlicer's source, tag v2.5.1).
+- `/Applications/OrcaSlicer.app` = 2.5.2; `/Applications/OrcaSlicer-2.4.2.app` kept for comparison.
+- JSON profile tree: `~/Software/orcaslicer-src` (sparse checkout of OrcaSlicer's source, tag v2.5.2).
   2.5 apps ship only the compiled `BBL.opc`. `P3DT_ORCA_PROFILES` points at it, set in `~/.profile` (and, for clients without env fields, ~/.config/p3dt/config.json via `p3dt config`)
   and in the p3dt entry ("env") of `claude_desktop_config.json`. Not in llm-translators' `config/env`.
 - Vendor profiles 02.08.00.16; `status` shows `profiles_version.match`.
@@ -147,6 +148,12 @@ OrcaSlicer versions are in the README; this file keeps decisions, setup, lessons
   no multiprocessing in p3dt (worker = one subprocess, falls back to a thread; OrcaSlicer must be startable,
   else NOT_PERMITTED with the fix); settings from ~/.config/p3dt/config.json (`p3dt config`); README lists
   the folders and programs a customized sandbox must allow.
+
+- **2026-11-23 (2026.11.23.1):** OrcaSlicer 2.5.2 pinned. Keys identical (995), vendor profiles 02.08.00.16.
+  Mac: bench 3/3 (bench_20261123_080105_425782); C2, panda (PETG), CAT identical to 2.5.1
+  (run_20261123_080137_602bb2): prime tower 186.45 / 54.97 mm3, flushes, 82 / 23 changes, grams. New in the
+  archive: filament_prime_volume (PLA Basic 30, PLA Matte 45 mm3), prime_volume_mode Default. First-layer
+  time comment now the first layer's own (C2: 592 s, was 313 s).
 
 ## Open
 

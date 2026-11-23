@@ -223,13 +223,13 @@ A benchmark passes when the result is reliable and its expected values hold.
 
 ## OrcaSlicer versions
 
-The translator is pinned to OrcaSlicer 2.5.1 (`p3dt status`: `version`, `pinned`, `matches`). It also runs 2.5.0 and 2.4.2. The setting names come from `data/orca_keys-<version>.json` for the version found (`data/orca_keys.json` is the pinned one).
+The translator is pinned to OrcaSlicer 2.5.2 (`p3dt status`: `version`, `pinned`, `matches`). It also runs 2.5.1, 2.5.0 and 2.4.2. The setting names come from `data/orca_keys-<version>.json` for the version found (`data/orca_keys.json` is the pinned one).
 
 OrcaSlicer 2.5 ships its vendor profiles compiled into one binary file per vendor (`resources/profiles/BBL.opc`). The translator reads the JSON profiles of the same version instead, from a sparse checkout of OrcaSlicer's source at the matching tag. It follows 2.5's profile `include` templates, which hold the machine G-code and the filament variant values. One checkout serves every version (switch its tag), so `P3DT_ORCA_PROFILES` never changes:
 
 ```bash
 cd ~/Software
-git clone --depth 1 --branch v2.5.1 --filter=blob:none --no-checkout https://github.com/OrcaSlicer/OrcaSlicer.git orcaslicer-src
+git clone --depth 1 --branch v2.5.2 --filter=blob:none --no-checkout https://github.com/OrcaSlicer/OrcaSlicer.git orcaslicer-src
 cd orcaslicer-src
 git sparse-checkout set --no-cone resources/profiles/BBL.json resources/profiles/BBL/ src/libslic3r/PrintConfig.cpp
 git checkout
@@ -452,6 +452,7 @@ OrcaSlicer's profiles are AGPL-3.0, so they are read from the installed OrcaSlic
 
 | Version | Changes |
 |---|---|
+| 2026.11.23.1 | Pinned to OrcaSlicer 2.5.2 (a maintenance release: slicing-crash fixes, per-filament prime volume for Bambu's prime tower). Setting names identical to 2.5.1 (995); Bambu vendor profiles unchanged (02.08.00.16). Checked on the Mac: bench 3/3, cabin C2, the painted panda and the CAT keychain give the same results as on 2.5.1 (prime tower, flushes, tool changes, grams, times to 1 s), all reliable. One visible change: the G-code's first-layer time now covers the first layer itself (C2: 592 s, was 313 s, which was mostly the start G-code), so `slice_info first_layer_time` changes too. |
 | 2026.11.18.1 | **Sandboxed MCP clients** (the Gemini Mac app): settings from `~/.config/p3dt/config.json` (`p3dt config KEY=VALUE`; the environment wins); where the background worker may not be started the studies run in the server's process (`worker` says so; `P3DT_IN_PROCESS=1`); OrcaSlicer refused → `NOT_PERMITTED` with the fix; the handshake reports p3dt's version; `tools/mcp_handshake.py` times a server's startup (0.2 s). |
 | 2026.11.16.2 | **Colour-painted 3MF objects** (`from_3mf.paint` auto/keep/drop): painted objects are sliced from a trimmed copy of the 3MF, paint included; paint filaments remapped by `filament_map`; new check `paint_applied`; dropped paint is a warning and an unreliable result unless accepted. OrcaSlicer's own flush matrix (its log) is the reference where it recomputes it. |
 | 2026.11.16.1 | **Flush volumes** (from a contaminated print: black → white purged 201 mm³ instead of 670). The colour-based matrix is written with `flush_multiplier` 1 (OrcaSlicer's default 0.3 under-purges); `intent.flush` (`auto`, a multiplier, `max`); `from_3mf.flush` (`keep`, or a warning when the project purges more); new check `flush_adequacy` per transition (soft; hard below half the minimum; acceptable); `estimate.tool_changes`. Fixed: a one-part object from a 3MF lost its filament (it took filament 1). |

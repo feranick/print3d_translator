@@ -1,6 +1,6 @@
 """orca.py — the OrcaSlicer command line: find it, tell its version, build the command, run it in its
 own process group with a timeout and a cancel flag, and decode its exit status.
-Version: 2026.11.18.1
+Version: 2026.11.23.1
 
 The translator never asks OrcaSlicer to do anything but slice files: no printer, network or cloud
 options are ever passed. Geometry comes in through an assemble list (--load-assemble-list): one STL
@@ -19,7 +19,7 @@ import time
 from functools import lru_cache
 from pathlib import Path
 
-PINNED = "2.5.1"
+PINNED = "2.5.2"
 
 # OrcaSlicer 2.4.2 src/libslic3r/Utils.hpp; the process exit status is the code mod 256
 EXIT_CODES = {
